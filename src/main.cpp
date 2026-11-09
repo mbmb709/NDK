@@ -213,7 +213,7 @@ public:
         if (objects->count()==0) return std::nullopt;
         auto* gm=GameManager::sharedState();
         auto previous=gm->m_editorClipboard;
-        this->copyObjects(objects);
+        this->copyObjects(objects, true, true);
         auto copied=gm->m_editorClipboard;
         gm->m_editorClipboard=previous; // do not erase the player's actual clipboard
         if (!schem::isObjectString(copied)) return std::nullopt;
