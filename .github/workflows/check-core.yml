@@ -1,0 +1,12 @@
+name: Validate schematic + pixelizer core
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test pure C++ core
+        run: ./tests/run-core.sh

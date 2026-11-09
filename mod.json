@@ -1,0 +1,12 @@
+{
+  "geode": "v5.11.2",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081"
+  },
+  "id": "schematic.image-editor",
+  "name": "Image & Schematic Editor",
+  "version": "v0.1.1",
+  "developer": "Community Prototype",
+  "description": "Prototype: image reference, pixel-art object import, and GDSCHEM1 .schem import/export. Geode 5.11.2, Geometry Dash 2.2081."
+}
