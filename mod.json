@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.1.3",
+  "version": "v0.1.4",
   "developer": "Community Prototype",
-  "description": "Prototype: image reference, pixel-art object import, and GDSCHEM1 .schem import/export. Geode 5.11.2, Geometry Dash 2.2081."
+  "description": "Image importer with automatic resize for large and unusual image dimensions, schematic tools, and diagnostic errors. Geode 5.11.2, Geometry Dash 2.2081."
 }
