@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
+#include <limits>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -55,76 +57,115 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 // Show an actionable diagnostic rather than a generic PNG/JPG error.
 std::string s_imageError;
 
-// Use Geode's file reader for paths supplied by the Android document picker.
-// Cocos's FileUtils path resolution does not reliably open these files.
+// Read the selected image only once. The compressed image may be large, but
+// the editor should only keep a small preview to avoid OOM and GPU texture limits.
 bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
-    auto result = pick::readBinary(path);
-    if (result.isErr()) {
-        s_imageError = "Cannot read this file. Copy it to Downloads and select that copy.";
+    auto file = pick::readBinary(path);
+    if (file.isErr()) {
+        s_imageError = "Cannot read image. Copy it to Downloads, then select that copy.";
         return false;
     }
-    auto& data = result.unwrap();
-    if (data.empty()) {
-        s_imageError = "Selected file is empty.";
+    auto& bytes = file.unwrap();
+    if (bytes.empty()) {
+        s_imageError = "Selected image file is empty.";
         return false;
     }
-    if (data.size() > 32'000'000) {
-        s_imageError = "Image file is larger than 32 MB. Convert it to a smaller JPG.";
+    // CCImage's decoder takes an int byte count, not size_t.
+    if (bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        s_imageError = "File is too large for this image decoder (over 2 GB).";
         return false;
     }
-    if (!image.initWithImageData(data.data(), static_cast<int>(data.size()), CCImage::kFmtUnKnown)) {
-        s_imageError = "Image format could not be decoded. Export as standard 8-bit RGB JPG.";
+    if (!image.initWithImageData(bytes.data(), static_cast<int>(bytes.size()), CCImage::kFmtUnKnown)) {
+        s_imageError = "Image decoder failed. Try a standard RGB PNG or JPG.";
         return false;
     }
     return true;
 }
 
-CCSprite* spriteFromPickedImage(std::filesystem::path const& path) {
+constexpr int kPreviewMaxEdge = 256;
+
+// Keep aspect ratio at any source resolution. Sample each destination pixel from
+// a small, regularly-spaced grid in its source area to bound CPU work and RAM.
+pixelizer::Image loadImage(std::filesystem::path const& path) {
+    s_imageError.clear();
+    pixelizer::Image result;
     CCImage image;
-    if (!decodePickedImage(path, image)) return nullptr;
+    if (!decodePickedImage(path, image)) return result;
+    const int sourceW = image.getWidth();
+    const int sourceH = image.getHeight();
+    const auto* source = image.getData();
+    const int channels = image.hasAlpha() ? 4 : 3;
+    if (sourceW <= 0 || sourceH <= 0 || !source) {
+        s_imageError = "Image decoder returned no pixels or invalid dimensions.";
+        return result;
+    }
+    if (image.getBitsPerComponent() != 8) {
+        s_imageError = "Unsupported color depth. Convert to 8-bit RGB PNG/JPG.";
+        return result;
+    }
+
+    const double factor = std::min({1.0,
+        static_cast<double>(kPreviewMaxEdge) / sourceW,
+        static_cast<double>(kPreviewMaxEdge) / sourceH});
+    const int targetW = std::clamp(
+        static_cast<int>(std::lround(sourceW * factor)), 1, kPreviewMaxEdge);
+    const int targetH = std::clamp(
+        static_cast<int>(std::lround(sourceH * factor)), 1, kPreviewMaxEdge);
+
+    result.width = targetW;
+    result.height = targetH;
+    result.channels = 4;
+    result.bytes.resize(static_cast<size_t>(targetW) * targetH * 4);
+
+    for (int y = 0; y < targetH; ++y) {
+        const int y0 = static_cast<int>(static_cast<int64_t>(y) * sourceH / targetH);
+        const int y1 = static_cast<int>(static_cast<int64_t>(y + 1) * sourceH / targetH);
+        const int samplesY = std::min(4, y1 - y0);
+        for (int x = 0; x < targetW; ++x) {
+            const int x0 = static_cast<int>(static_cast<int64_t>(x) * sourceW / targetW);
+            const int x1 = static_cast<int>(static_cast<int64_t>(x + 1) * sourceW / targetW);
+            const int samplesX = std::min(4, x1 - x0);
+            uint64_t r = 0, g = 0, b = 0, alpha = 0;
+            for (int sy = 0; sy < samplesY; ++sy) {
+                const int srcY = y0 + (2 * sy + 1) * (y1 - y0) / (2 * samplesY);
+                for (int sx = 0; sx < samplesX; ++sx) {
+                    const int srcX = x0 + (2 * sx + 1) * (x1 - x0) / (2 * samplesX);
+                    const size_t src = (static_cast<size_t>(srcY) * sourceW + srcX) * channels;
+                    const uint32_t a = channels == 4 ? source[src + 3] : 255;
+                    alpha += a;
+                    r += static_cast<uint64_t>(source[src]) * a;
+                    g += static_cast<uint64_t>(source[src + 1]) * a;
+                    b += static_cast<uint64_t>(source[src + 2]) * a;
+                }
+            }
+            const size_t dst = (static_cast<size_t>(y) * targetW + x) * 4;
+            const int sampleCount = samplesX * samplesY;
+            result.bytes[dst] = alpha ? static_cast<uint8_t>(r / alpha) : 0;
+            result.bytes[dst + 1] = alpha ? static_cast<uint8_t>(g / alpha) : 0;
+            result.bytes[dst + 2] = alpha ? static_cast<uint8_t>(b / alpha) : 0;
+            result.bytes[dst + 3] = static_cast<uint8_t>(alpha / sampleCount);
+        }
+    }
+    return result;
+}
+
+CCSprite* spriteFromImage(pixelizer::Image const& image) {
+    if (image.width <= 0 || image.height <= 0 || image.channels != 4 || image.bytes.empty()) {
+        s_imageError = "Preview has no pixel data.";
+        return nullptr;
+    }
     auto* texture = new CCTexture2D();
-    if (!texture->initWithImage(&image)) {
-        s_imageError = "Preview texture could not be created. Try a JPG smaller than 1920 px.";
+    if (!texture->initWithData(
+            image.bytes.data(), kCCTexture2DPixelFormat_RGBA8888,
+            static_cast<unsigned int>(image.width), static_cast<unsigned int>(image.height),
+            CCSize(static_cast<float>(image.width), static_cast<float>(image.height)))) {
+        s_imageError = "Could not create the image preview texture.";
         texture->release();
         return nullptr;
     }
     auto* sprite = CCSprite::createWithTexture(texture);
     texture->release();
     return sprite;
-}
-
-pixelizer::Image loadImage(std::filesystem::path const& path) {
-    s_imageError.clear();
-    pixelizer::Image result;
-    CCImage image;
-    if (!decodePickedImage(path, image)) return result;
-    const int w=image.getWidth(), h=image.getHeight();
-    if (w<=0 || h<=0) {
-        s_imageError = "Image has invalid dimensions.";
-        return result;
-    }
-    if (static_cast<uint64_t>(w)*h>16'000'000) {
-        s_imageError = "Image has more than 16 million pixels. Resize to 1920 px or smaller.";
-        return result;
-    }
-    const auto pixels=static_cast<size_t>(w)*h;
-    const int n = image.hasAlpha() ? 4 : 3; // CCImage::getDataLen() returns pixel count, not byte count
-    if (n!=3 && n!=4) return result;
-    const auto len=pixels*n;
-    const auto* data=image.getData();
-    if (!data) {
-        s_imageError = "Image decoder returned no pixel data.";
-        return result;
-    }
-    if (image.getBitsPerComponent() != 8) {
-        s_imageError = "Unsupported pixel depth. Convert to a standard 8-bit RGB JPG.";
-        return result;
-    }
-    result.width=w;
-    result.height=h;
-    result.channels=n;
-    result.bytes.assign(data,data+len);
-    return result;
 }
 
 // Dragging is handled separately from GD objects; visual previews are not saved.
@@ -222,7 +263,7 @@ public:
         clearGhost();
         auto rgba=loadImage(m_fields->imagePath);
         if (rgba.width==0) return false;
-        auto* sprite=spriteFromPickedImage(m_fields->imagePath);
+        auto* sprite=spriteFromImage(rgba);
         if (!sprite) return false;
         const auto reference=pixelizer::convert(rgba,0,0);
         if (reference.columns==0 || reference.rows==0) {
