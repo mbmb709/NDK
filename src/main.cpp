@@ -82,11 +82,11 @@ pixelizer::Image loadImage(std::filesystem::path const& path) {
     const int w=image.getWidth(), h=image.getHeight();
     if (w<=0 || h<=0 || static_cast<uint64_t>(w)*h>16'000'000) return result;
     const auto pixels=static_cast<size_t>(w)*h;
-    const int n=static_cast<int>(image.getDataLen()/pixels);
+    const int n = image.hasAlpha() ? 4 : 3; // CCImage::getDataLen() returns pixel count, not byte count
     if (n!=3 && n!=4) return result;
     const auto len=pixels*n;
     const auto* data=image.getData();
-    if (!data || image.getDataLen()<len) return result;
+    if (!data || image.getBitsPerComponent() != 8) return result;
     result.width=w;
     result.height=h;
     result.channels=n;
