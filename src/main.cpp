@@ -52,14 +52,31 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 #endif
 }
 
+// Show an actionable diagnostic rather than a generic PNG/JPG error.
+std::string s_imageError;
+
 // Use Geode's file reader for paths supplied by the Android document picker.
 // Cocos's FileUtils path resolution does not reliably open these files.
 bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
     auto result = pick::readBinary(path);
-    if (result.isErr()) return false;
+    if (result.isErr()) {
+        s_imageError = "Cannot read this file. Copy it to Downloads and select that copy.";
+        return false;
+    }
     auto& data = result.unwrap();
-    if (data.empty() || data.size() > 32'000'000) return false;
-    return image.initWithImageData(data.data(), static_cast<int>(data.size()), CCImage::kFmtUnKnown);
+    if (data.empty()) {
+        s_imageError = "Selected file is empty.";
+        return false;
+    }
+    if (data.size() > 32'000'000) {
+        s_imageError = "Image file is larger than 32 MB. Convert it to a smaller JPG.";
+        return false;
+    }
+    if (!image.initWithImageData(data.data(), static_cast<int>(data.size()), CCImage::kFmtUnKnown)) {
+        s_imageError = "Image format could not be decoded. Export as standard 8-bit RGB JPG.";
+        return false;
+    }
+    return true;
 }
 
 CCSprite* spriteFromPickedImage(std::filesystem::path const& path) {
@@ -67,6 +84,7 @@ CCSprite* spriteFromPickedImage(std::filesystem::path const& path) {
     if (!decodePickedImage(path, image)) return nullptr;
     auto* texture = new CCTexture2D();
     if (!texture->initWithImage(&image)) {
+        s_imageError = "Preview texture could not be created. Try a JPG smaller than 1920 px.";
         texture->release();
         return nullptr;
     }
@@ -76,17 +94,32 @@ CCSprite* spriteFromPickedImage(std::filesystem::path const& path) {
 }
 
 pixelizer::Image loadImage(std::filesystem::path const& path) {
+    s_imageError.clear();
     pixelizer::Image result;
     CCImage image;
     if (!decodePickedImage(path, image)) return result;
     const int w=image.getWidth(), h=image.getHeight();
-    if (w<=0 || h<=0 || static_cast<uint64_t>(w)*h>16'000'000) return result;
+    if (w<=0 || h<=0) {
+        s_imageError = "Image has invalid dimensions.";
+        return result;
+    }
+    if (static_cast<uint64_t>(w)*h>16'000'000) {
+        s_imageError = "Image has more than 16 million pixels. Resize to 1920 px or smaller.";
+        return result;
+    }
     const auto pixels=static_cast<size_t>(w)*h;
     const int n = image.hasAlpha() ? 4 : 3; // CCImage::getDataLen() returns pixel count, not byte count
     if (n!=3 && n!=4) return result;
     const auto len=pixels*n;
     const auto* data=image.getData();
-    if (!data || image.getBitsPerComponent() != 8) return result;
+    if (!data) {
+        s_imageError = "Image decoder returned no pixel data.";
+        return result;
+    }
+    if (image.getBitsPerComponent() != 8) {
+        s_imageError = "Unsupported pixel depth. Convert to a standard 8-bit RGB JPG.";
+        return result;
+    }
     result.width=w;
     result.height=h;
     result.channels=n;
@@ -192,7 +225,10 @@ public:
         auto* sprite=spriteFromPickedImage(m_fields->imagePath);
         if (!sprite) return false;
         const auto reference=pixelizer::convert(rgba,0,0);
-        if (reference.columns==0 || reference.rows==0) return false;
+        if (reference.columns==0 || reference.rows==0) {
+            s_imageError = "Image cannot be converted to a preview. Try a smaller JPG.";
+            return false;
+        }
         sprite->setPosition(center);
         sprite->setOpacity(180);
         sprite->setScaleX(float(reference.columns*pixelizer::kPixelUnits)/sprite->getContentSize().width);
@@ -329,7 +365,7 @@ class ImageSchematicPopup final : public geode::Popup {
             return;
         }
         if (!ui->showVisualImage()) {
-            message("Image", "Cannot load this image; try PNG or JPG.");
+            message("Image", s_imageError.empty() ? "Cannot create a preview. Try a smaller JPG." : s_imageError);
             return;
         }
         onClose(nullptr);
@@ -339,7 +375,7 @@ class ImageSchematicPopup final : public geode::Popup {
         auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get());
         if (!ui || !ui->hasImage()) {message("Image", "Choose an image first.");return;}
         auto pixels=ui->buildPixelObjects();
-        if (!pixels) {message("Image", "No usable opaque pixels or unsupported image.");return;}
+        if (!pixels) {message("Image", s_imageError.empty() ? "No usable pixels in image." : s_imageError);return;}
         if (!ui->importPixels(*pixels)) {message("Image", "Game editor failed to create objects.");return;}
         onClose(nullptr);
     }
