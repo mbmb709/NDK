@@ -52,10 +52,33 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 #endif
 }
 
+// Use Geode's file reader for paths supplied by the Android document picker.
+// Cocos's FileUtils path resolution does not reliably open these files.
+bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
+    auto result = pick::readBinary(path);
+    if (result.isErr()) return false;
+    auto& data = result.unwrap();
+    if (data.empty() || data.size() > 32'000'000) return false;
+    return image.initWithImageData(data.data(), static_cast<int>(data.size()), CCImage::kFmtUnKnown);
+}
+
+CCSprite* spriteFromPickedImage(std::filesystem::path const& path) {
+    CCImage image;
+    if (!decodePickedImage(path, image)) return nullptr;
+    auto* texture = new CCTexture2D();
+    if (!texture->initWithImage(&image)) {
+        texture->release();
+        return nullptr;
+    }
+    auto* sprite = CCSprite::createWithTexture(texture);
+    texture->release();
+    return sprite;
+}
+
 pixelizer::Image loadImage(std::filesystem::path const& path) {
     pixelizer::Image result;
     CCImage image;
-    if (!image.initWithImageFile(path.string().c_str(), CCImage::kFmtUnKnown)) return result;
+    if (!decodePickedImage(path, image)) return result;
     const int w=image.getWidth(), h=image.getHeight();
     if (w<=0 || h<=0 || static_cast<uint64_t>(w)*h>16'000'000) return result;
     const auto pixels=static_cast<size_t>(w)*h;
@@ -166,7 +189,7 @@ public:
         clearGhost();
         auto rgba=loadImage(m_fields->imagePath);
         if (rgba.width==0) return false;
-        auto* sprite=CCSprite::create(m_fields->imagePath.string().c_str());
+        auto* sprite=spriteFromPickedImage(m_fields->imagePath);
         if (!sprite) return false;
         const auto reference=pixelizer::convert(rgba,0,0);
         if (reference.columns==0 || reference.rows==0) return false;
