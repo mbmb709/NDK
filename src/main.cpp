@@ -4,6 +4,7 @@
 #include <Geode/modify/EditorUI.hpp>
 #include <Geode/utils/async.hpp>
 #include <Geode/utils/file.hpp>
+#include <Geode/utils/permission.hpp>
 
 #include "Pixelizer.hpp"
 #include "Schematic.hpp"
@@ -62,7 +63,7 @@ std::string s_imageError;
 bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
     auto file = pick::readBinary(path);
     if (file.isErr()) {
-        s_imageError = "Cannot read image. Copy it to Downloads, then select that copy.";
+        s_imageError = "Cannot read selected file: " + file.unwrapErr() + ". Try a local copy in Downloads or grant Geode storage access.";
         return false;
     }
     auto& bytes = file.unwrap();
@@ -384,19 +385,40 @@ class ImageSchematicPopup final : public geode::Popup {
         });
     }
 
-    void onChooseImage(CCObject*) {
+    void openImagePicker() {
         pick::FilePickOptions opts;
         opts.filters.push_back({"Images", {"*.png","*.jpg","*.jpeg","*.webp"}});
         Ref<ImageSchematicPopup> keep(this);
-        geode::async::spawn(pick::pick(pick::PickMode::OpenFile,std::move(opts)),[keep](auto result) {
-            if (result.isErr()) {message("Image", "The image picker failed.");return;}
-            const auto path=result.unwrap();
+        geode::async::spawn(pick::pick(pick::PickMode::OpenFile, std::move(opts)), [keep](auto result) {
+            if (result.isErr()) {
+                message("Image", "Image picker failed. Check Geode Launcher storage permissions.");
+                return;
+            }
+            const auto path = result.unwrap();
             if (!path) return;
-            if (auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) {
+            if (auto* ui = static_cast<ImageSchematicEditorUI*>(EditorUI::get())) {
                 ui->selectImage(*path);
                 keep->setFilename(ui->chosenImageName());
             }
         });
+    }
+
+    void onChooseImage(CCObject*) {
+#ifdef GEODE_IS_ANDROID
+        using geode::utils::permission::Permission;
+        if (!geode::utils::permission::getPermissionStatus(Permission::ReadAllFiles)) {
+            Ref<ImageSchematicPopup> keep(this);
+            geode::utils::permission::requestPermission(Permission::ReadAllFiles, [keep](bool granted) {
+                if (granted) {
+                    keep->openImagePicker();
+                } else {
+                    message("Storage permission", "Geode needs access to the selected image. You can grant storage access in Android settings, or use a local file.");
+                }
+            });
+            return;
+        }
+#endif
+        openImagePicker();
     }
 
     void onPreview(CCObject*) {
