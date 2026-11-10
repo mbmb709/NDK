@@ -13,6 +13,11 @@ int main() {
     assert(result.columns==3 && result.rows==2);
     assert(result.objectCount==5);
     assert(result.gdObjectString.find("1,917,2,")!=std::string::npos);
+    // Avoid game engine "enter", shrink and fade transitions as the camera approaches.
+    assert(result.gdObjectString.find(",64,1,67,1;")!=std::string::npos);
+    size_t flags=0;
+    for (size_t index=0; (index=result.gdObjectString.find(",64,1,67,1;",index))!=std::string::npos; index+=11) ++flags;
+    assert(flags==static_cast<size_t>(result.objectCount));
     schem::Document doc{"image","test.png",result.gdObjectString};
     const auto encoded=schem::serialize(doc);
     assert(!encoded.empty());
@@ -65,6 +70,7 @@ int main() {
     auto largeGrid=pixelizer::convert(photo,1000,700,512);
     assert(smallGrid.columns==32 && smallGrid.rows==16 && smallGrid.objectCount==512);
     assert(largeGrid.columns==512 && largeGrid.rows==256 && largeGrid.objectCount==131072);
+    assert(largeGrid.gdObjectString.find(",64,1,67,1;")!=std::string::npos);
     assert(pixelizer::pixelSizeForGrid(32,16)==15.0);
     assert(pixelizer::pixelSizeForGrid(512,256)==0.9375);
     assert(pixelizer::pixelSizeForGrid(32,16)*32==pixelizer::kCanvasMaxUnits);

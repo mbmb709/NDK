@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.1.8",
+  "version": "v0.1.9",
   "developer": "Community Prototype",
-  "description": "Fixed-size images at every pixel density: higher resolutions create more, smaller scaled objects; sharp matching preview, 16-512px. GD 2.2081, Geode 5.11.2."
+  "description": "Stable imported pixel-art when camera moves: disables GD fade and enter effects for every cell. Fixed-size images with 16-512px resolution. Geode 5.11.2, GD 2.2081."
 }

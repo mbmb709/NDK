@@ -82,9 +82,12 @@ Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
         const double objX=cx+(x+.5-res.columns/2.)*pixelUnits;
         const double objY=cy+(res.rows/2.-y-.5)*pixelUnits;
         // 917: decorative pixel. 21: base channel (1010, white), 41/43: absolute HSV.
+        // Disable camera enter/shrink/fade transitions on imported image cells.
+        // 64 = Don't Fade, 67 = Don't Enter (GD object properties).
         out << "1,917,2," << objX << ",3," << objY
             << ",21,1010,41,1,43," << hsv.h << 'a' << hsv.s << 'a' << hsv.v << "a1a1"
-            << ",24,5,25,-7,32," << objectScale << ';';
+            << ",24,5,25,-7,32," << objectScale
+            << ",64,1,67,1;";
         ++res.objectCount;
     }
     res.gdObjectString=out.str();
