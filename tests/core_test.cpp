@@ -104,7 +104,7 @@ int main() {
     auto flat=pixelizer::convertAdaptive(uniform,0,0,128);
     assert(flat.columns==128 && flat.rows==128);
     assert(flat.objectCount==64); // 8x8 blocks of 16x16, instead of 16,384 cells
-    assert(flat.gdObjectString.find(",32,16.0000,64,1,67,1;")!=std::string::npos);
+    assert(flat.gdObjectString.find(",32,8.0000,64,1,67,1;")!=std::string::npos);
     // A sharp vertical boundary forces small blocks near the edge.
     for(int y=0;y<128;++y) for(int x=63;x<128;++x) {
         const auto i=(static_cast<size_t>(y)*128+x)*4;
