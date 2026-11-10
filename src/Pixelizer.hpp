@@ -18,7 +18,7 @@ struct Conversion {
 };
 
 constexpr int kMaxDimension = 48;  // Legacy default for core and tests
-constexpr int kMaxSelectableDimension = 128; // 16,384 objects maximum
+constexpr int kMaxSelectableDimension = 512; // Extreme mode: up to 262,144 objects; can overload GD
 constexpr double kPixelUnits = 7.5;   // GD pixel object 917 is 7.5 level units at scale 1
 
 Conversion convert(Image const& image, double centerX, double centerY, int maxDimension = kMaxDimension);

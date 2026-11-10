@@ -57,8 +57,8 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 
 // Show an actionable diagnostic rather than a generic PNG/JPG error.
 std::string s_imageError;
-int s_pixelResolution = 64;
-constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128};
+int s_pixelResolution = 256;
+constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
 
 // Read the selected image only once. The compressed image may be large, but
 // the editor should only keep a small preview to avoid OOM and GPU texture limits.
@@ -85,7 +85,7 @@ bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
     return true;
 }
 
-constexpr int kPreviewMaxEdge = 256;
+constexpr int kPreviewMaxEdge = 512;
 
 // Keep aspect ratio at any source resolution. Sample each destination pixel from
 // a small, regularly-spaced grid in its source area to bound CPU work and RAM.
@@ -362,7 +362,7 @@ class ImageSchematicPopup final : public geode::Popup {
         m_name->setScale(.44f);
         m_mainLayer->addChild(m_name);
 
-        s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution",64),16,128);
+        s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",256),16,512);
         m_detail=CCLabelBMFont::create("", "bigFont.fnt");
         m_detail->setPosition({195,145});
         m_detail->setScale(.51f);
@@ -386,19 +386,19 @@ class ImageSchematicPopup final : public geode::Popup {
         }
         if (m_count) {
             const auto maximum=s_pixelResolution*s_pixelResolution;
-            const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=96 ? " (may be slow)" : "");
+            const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=256 ? " (! Heavy!)" : s_pixelResolution>=128 ? " (slow)" : "");
             m_count->setString(label.c_str());
         }
     }
 
     void setPixelResolution(int next) {
         s_pixelResolution=std::clamp(next,16,pixelizer::kMaxSelectableDimension);
-        Mod::get()->setSavedValue("pixel-resolution",s_pixelResolution);
+        Mod::get()->setSavedValue("pixel-resolution-v2",s_pixelResolution);
         refreshPixelInfo();
     }
 
     void onFewerPixels(CCObject*) {
-        for (int i=6;i>0;--i) if (s_pixelResolution>=kPixelSteps[i]) {
+        for (int i=10;i>0;--i) if (s_pixelResolution>=kPixelSteps[i]) {
             setPixelResolution(kPixelSteps[i-1]);
             return;
         }
@@ -410,7 +410,7 @@ class ImageSchematicPopup final : public geode::Popup {
             setPixelResolution(step);
             return;
         }
-        setPixelResolution(kPixelSteps[6]);
+        setPixelResolution(kPixelSteps[10]);
     }
 
     void setFilename(std::string const& name) {

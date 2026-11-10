@@ -44,6 +44,20 @@ int main() {
     assert(highPreview.width==high.columns && highPreview.height==high.rows);
     assert(lowPreview.channels==4 && highPreview.bytes.size()==static_cast<size_t>(high.columns*high.rows*4));
     assert(lowPreview.bytes[0]==255 && lowPreview.bytes[1]==255 && lowPreview.bytes[2]==255 && lowPreview.bytes[3]==255);
+    // New, higher quality settings keep original image detail instead of being capped at 128px.
+    auto detail256=pixelizer::makePreview(large,256);
+    auto detail384=pixelizer::makePreview(large,384);
+    auto detail512=pixelizer::makePreview(large,512);
+    assert(detail256.width==256 && detail256.height==171);
+    assert(detail384.width==384 && detail384.height==256);
+    assert(detail512.width==480 && detail512.height==320);
+    pixelizer::Image photo;
+    photo.width=1024; photo.height=512; photo.channels=3;
+    photo.bytes.assign(static_cast<size_t>(photo.width)*photo.height*3,255);
+    auto detail512big=pixelizer::makePreview(photo,512);
+    assert(detail512big.width==512 && detail512big.height==256);
+    assert(detail512big.bytes.size()==static_cast<size_t>(512*256*4));
+    assert(pixelizer::kMaxSelectableDimension==512);
 
     std::cout << "OK: 5 objects, .schem round-trip, malformed file rejected\n";
 }
