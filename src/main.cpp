@@ -59,6 +59,8 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 std::string s_imageError;
 int s_pixelResolution = 256;
 bool s_adaptiveMode = true;
+int s_imageSize=480;
+constexpr int kImageSizeSteps[]={120,180,240,360,480,600,720,960};
 constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
 
 // Read the selected image only once. The compressed image may be large, but
@@ -220,6 +222,8 @@ public:
         std::string imageName;
         CCSprite* ghost=nullptr;
         PreviewDragLayer* drag=nullptr;
+        CCMenuItemSpriteExtra* smaller=nullptr;
+        CCMenuItemSpriteExtra* bigger=nullptr;
     };
 
     bool init(LevelEditorLayer* level) {
@@ -230,12 +234,56 @@ public:
         auto* button=CCMenuItemSpriteExtra::create(ButtonSprite::create("IMG"), this, menu_selector(ImageSchematicEditorUI::onOpenImageMenu));
         button->setScale(.58f);
         menu->addChild(button);
+        auto* smaller=CCMenuItemSpriteExtra::create(ButtonSprite::create("Size -"),this,menu_selector(ImageSchematicEditorUI::onPreviewSmaller));
+        smaller->setPosition({-75.f,0.f});
+        smaller->setScale(.43f);
+        smaller->setVisible(false);
+        menu->addChild(smaller);
+        auto* bigger=CCMenuItemSpriteExtra::create(ButtonSprite::create("Size +"),this,menu_selector(ImageSchematicEditorUI::onPreviewLarger));
+        bigger->setPosition({-145.f,0.f});
+        bigger->setScale(.43f);
+        bigger->setVisible(false);
+        menu->addChild(bigger);
+        m_fields->smaller=smaller;
+        m_fields->bigger=bigger;
+        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,960);
         menu->setID("schematic.image-editor/menu");
         this->addChild(menu,999);
         return true;
     }
 
     void onOpenImageMenu(CCObject*);
+
+    void syncPreviewButtons() {
+        const bool visible=m_fields->ghost!=nullptr;
+        if (m_fields->smaller) m_fields->smaller->setVisible(visible);
+        if (m_fields->bigger) m_fields->bigger->setVisible(visible);
+    }
+
+    void resizeVisualImage() {
+        if (!m_fields->ghost) return;
+        const auto size=m_fields->ghost->getContentSize();
+        const float longest=std::max(size.width,size.height);
+        if (longest>0.f) m_fields->ghost->setScale(static_cast<float>(s_imageSize)/longest);
+    }
+
+    void changePreviewSize(int next) {
+        s_imageSize=std::clamp(next,120,960);
+        Mod::get()->setSavedValue("image-size-v1",s_imageSize);
+        resizeVisualImage(); // Resizes existing Preview immediately, preserving its center.
+    }
+    void onPreviewSmaller(CCObject*) {
+        for (int i=7;i>0;--i) if (s_imageSize>=kImageSizeSteps[i]) {
+            changePreviewSize(kImageSizeSteps[i-1]);return;
+        }
+        changePreviewSize(kImageSizeSteps[0]);
+    }
+    void onPreviewLarger(CCObject*) {
+        for(const int step:kImageSizeSteps) if(step>s_imageSize) {
+            changePreviewSize(step);return;
+        }
+        changePreviewSize(kImageSizeSteps[7]);
+    }
 
     void clearGhost() {
         if (m_fields->drag) {
@@ -246,6 +294,7 @@ public:
             m_fields->ghost->removeFromParentAndCleanup(true);
             m_fields->ghost=nullptr;
         }
+        syncPreviewButtons();
     }
 
     void selectImage(std::filesystem::path const& path) {
@@ -263,6 +312,8 @@ public:
         return m_editorLayer->m_objectLayer->convertToNodeSpace({win.width/2.f,win.height/2.f});
     }
 
+    bool hasVisualPreview() { return m_fields->ghost!=nullptr; }
+
     bool showVisualImage() {
         if (!hasImage()) return false;
         const auto center=placementCenter();
@@ -278,12 +329,15 @@ public:
         if (!sprite) return false;
         sprite->setPosition(center);
         sprite->setOpacity(180);
-        const auto pixelUnits=pixelizer::pixelSizeForGrid(sampled.width,sampled.height);
-        sprite->setScaleX(float(sampled.width*pixelUnits)/sprite->getContentSize().width);
-        sprite->setScaleY(float(sampled.height*pixelUnits)/sprite->getContentSize().height);
+        // Same longest-edge size used by the actual GD object conversion.
+        const auto texSize=sprite->getContentSize();
+        const float longest=std::max(texSize.width,texSize.height);
+        if (longest<=0.f) { sprite->release(); return false; }
+        sprite->setScale(static_cast<float>(s_imageSize)/longest);
         sprite->setID("schematic.image-editor/visual-preview");
         m_editorLayer->m_objectLayer->addChild(sprite,5000);
         m_fields->ghost=sprite;
+        syncPreviewButtons();
         auto* drag=PreviewDragLayer::create(sprite,m_editorLayer->m_objectLayer);
         if (drag) {
             drag->setID("schematic.image-editor/drag-handler");
@@ -298,7 +352,9 @@ public:
         auto rgba=loadImage(m_fields->imagePath);
         if (!rgba.width) return std::nullopt;
         const auto center=placementCenter();
-        auto result=s_adaptiveMode ? pixelizer::convertAdaptive(rgba,center.x,center.y,s_pixelResolution) : pixelizer::convert(rgba,center.x,center.y,s_pixelResolution);
+        auto result=s_adaptiveMode
+            ? pixelizer::convertAdaptive(rgba,center.x,center.y,s_pixelResolution,20,s_imageSize)
+            : pixelizer::convert(rgba,center.x,center.y,s_pixelResolution,s_imageSize);
         if (result.objectCount==0) return std::nullopt;
         return result;
     }
@@ -333,6 +389,7 @@ class ImageSchematicPopup final : public geode::Popup {
     CCLabelBMFont* m_detail=nullptr;
     CCLabelBMFont* m_count=nullptr;
     CCLabelBMFont* m_mode=nullptr;
+    CCLabelBMFont* m_size=nullptr;
 
     void addButton(CCMenu* menu, char const* text, SEL_MenuHandler cb, float x, float y, float width=1.f) {
         auto* item=CCMenuItemSpriteExtra::create(ButtonSprite::create(text), this, cb);
@@ -349,37 +406,45 @@ class ImageSchematicPopup final : public geode::Popup {
         m_mainLayer->addChild(menu);
 
         // Four evenly spaced rows; buttons do not overlap on small screens.
-        addButton(menu,"Choose Image",menu_selector(ImageSchematicPopup::onChooseImage),-95,77,.66f);
-        addButton(menu,"Open .schem",menu_selector(ImageSchematicPopup::onOpenSchematic),95,77,.66f);
+        addButton(menu,"Choose Image",menu_selector(ImageSchematicPopup::onChooseImage),-95,89,.62f);
+        addButton(menu,"Open .schem",menu_selector(ImageSchematicPopup::onOpenSchematic),95,89,.62f);
 
-        addButton(menu,"-",menu_selector(ImageSchematicPopup::onFewerPixels),-125,14,.68f);
-        addButton(menu,"+",menu_selector(ImageSchematicPopup::onMorePixels),125,14,.68f);
-        addButton(menu,"Mode",menu_selector(ImageSchematicPopup::onToggleAdaptive),0,14,.62f);
+        addButton(menu,"-",menu_selector(ImageSchematicPopup::onFewerPixels),-125,-8,.57f);
+        addButton(menu,"+",menu_selector(ImageSchematicPopup::onMorePixels),125,-8,.57f);
+        addButton(menu,"Mode",menu_selector(ImageSchematicPopup::onToggleAdaptive),0,-8,.52f);
 
-        addButton(menu,"Preview",menu_selector(ImageSchematicPopup::onPreview),-97,-36,.73f);
-        addButton(menu,"Import Pixel Art",menu_selector(ImageSchematicPopup::onImportPixels),97,-36,.66f);
-        addButton(menu,"Export .schem",menu_selector(ImageSchematicPopup::onDownloadImageSchematic),-97,-84,.62f);
-        addButton(menu,"Save Selection",menu_selector(ImageSchematicPopup::onSaveSelection),97,-84,.62f);
+        addButton(menu,"Size -",menu_selector(ImageSchematicPopup::onSmallerImage),-125,-42,.57f);
+        addButton(menu,"Size +",menu_selector(ImageSchematicPopup::onLargerImage),125,-42,.57f);
+
+        addButton(menu,"Preview",menu_selector(ImageSchematicPopup::onPreview),-97,-77,.64f);
+        addButton(menu,"Import Objects",menu_selector(ImageSchematicPopup::onImportPixels),97,-77,.62f);
+        addButton(menu,"Export .schem",menu_selector(ImageSchematicPopup::onDownloadImageSchematic),-97,-110,.52f);
+        addButton(menu,"Save Selection",menu_selector(ImageSchematicPopup::onSaveSelection),97,-110,.52f);
 
         m_name=CCLabelBMFont::create("No image selected", "bigFont.fnt");
-        m_name->setPosition({195,172});
-        m_name->setScale(.44f);
+        m_name->setPosition({195,194});
+        m_name->setScale(.40f);
         m_mainLayer->addChild(m_name);
 
         s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",256),16,512);
         s_adaptiveMode=Mod::get()->getSavedValue<bool>("adaptive-mode",true);
+        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,960);
         m_detail=CCLabelBMFont::create("", "bigFont.fnt");
-        m_detail->setPosition({195,145});
-        m_detail->setScale(.51f);
+        m_detail->setPosition({195,176});
+        m_detail->setScale(.40f);
         m_mainLayer->addChild(m_detail);
         m_count=CCLabelBMFont::create("", "bigFont.fnt");
-        m_count->setPosition({195,121});
-        m_count->setScale(.38f);
+        m_count->setPosition({195,161});
+        m_count->setScale(.28f);
         m_mainLayer->addChild(m_count);
         m_mode=CCLabelBMFont::create("", "bigFont.fnt");
-        m_mode->setPosition({195,101});
-        m_mode->setScale(.34f);
+        m_mode->setPosition({195,146});
+        m_mode->setScale(.29f);
         m_mainLayer->addChild(m_mode);
+        m_size=CCLabelBMFont::create("", "bigFont.fnt");
+        m_size->setPosition({195,88});
+        m_size->setScale(.44f);
+        m_mainLayer->addChild(m_size);
         refreshPixelInfo();
 
         if (auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) {
@@ -390,7 +455,7 @@ class ImageSchematicPopup final : public geode::Popup {
 
     void refreshPixelInfo() {
         if (m_detail) {
-            const auto label="Pixel detail: "+std::to_string(s_pixelResolution)+" px (fixed size)";
+            const auto label="Pixel detail: "+std::to_string(s_pixelResolution)+" px";
             m_detail->setString(label.c_str());
         }
         if (m_count) {
@@ -398,18 +463,30 @@ class ImageSchematicPopup final : public geode::Popup {
             const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=256 ? " (! Heavy!)" : s_pixelResolution>=128 ? " (slow)" : "");
             m_count->setString(label.c_str());
         }
-        if (m_mode) m_mode->setString(s_adaptiveMode ? "Adaptive ON: big flat blocks, small edges" : "Uniform: one object per pixel");
+        if (m_mode) m_mode->setString(s_adaptiveMode ? "Adaptive MAX: largest matching squares" : "Uniform: one object per pixel");
+        if (m_size) m_size->setString(("Size: "+std::to_string(s_imageSize)+"u").c_str());
     }
 
     void setPixelResolution(int next) {
         s_pixelResolution=std::clamp(next,16,pixelizer::kMaxSelectableDimension);
         Mod::get()->setSavedValue("pixel-resolution-v2",s_pixelResolution);
+        if(auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get()))
+            if(ui->hasVisualPreview()) ui->showVisualImage();
         refreshPixelInfo();
     }
 
     void onToggleAdaptive(CCObject*) {
         s_adaptiveMode=!s_adaptiveMode;
         Mod::get()->setSavedValue("adaptive-mode",s_adaptiveMode);
+        refreshPixelInfo();
+    }
+
+    void onSmallerImage(CCObject*) {
+        if(auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) ui->onPreviewSmaller(nullptr);
+        refreshPixelInfo();
+    }
+    void onLargerImage(CCObject*) {
+        if(auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) ui->onPreviewLarger(nullptr);
         refreshPixelInfo();
     }
 

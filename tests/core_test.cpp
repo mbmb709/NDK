@@ -103,8 +103,8 @@ int main() {
     uniform.bytes.assign(128*128*4,255);
     auto flat=pixelizer::convertAdaptive(uniform,0,0,128);
     assert(flat.columns==128 && flat.rows==128);
-    assert(flat.objectCount==64); // 8x8 blocks of 16x16, instead of 16,384 cells
-    assert(flat.gdObjectString.find(",32,8.0000,64,1,67,1;")!=std::string::npos);
+    assert(flat.objectCount==1); // Entire 128x128 solid color becomes a single object
+    assert(flat.gdObjectString.find(",32,64.0000,64,1,67,1;")!=std::string::npos);
     // A sharp vertical boundary forces small blocks near the edge.
     for(int y=0;y<128;++y) for(int x=63;x<128;++x) {
         const auto i=(static_cast<size_t>(y)*128+x)*4;
@@ -116,5 +116,63 @@ int main() {
     // Adaptive and uniform occupy the same fixed-size image canvas.
     assert(edged.columns==128 && edged.rows==128);
     assert(edged.gdObjectString.find(",64,1,67,1;")!=std::string::npos);
-    std::cout << "OK: 5 objects, adaptive pixelizer, .schem round-trip, malformed file rejected\n";
+
+    // Physical image size must be independent of grid detail and mode.
+    const double chosenSize=720.0;
+    auto sizedUniform=pixelizer::convert(photo,1000,700,32,chosenSize);
+    auto sizedAdaptive=pixelizer::convertAdaptive(photo,1000,700,32,20,chosenSize);
+    assert(sizedUniform.columns==32 && sizedAdaptive.columns==32);
+    assert(std::abs(pixelizer::pixelSizeForGrid(32,16,chosenSize)*32-chosenSize)<0.001);
+    assert(std::abs(objectProperty(sizedUniform.gdObjectString,"32")-3.0)<0.001);
+    assert(std::abs(objectProperty(sizedAdaptive.gdObjectString,"32")-96.0)<0.001);
+    // Same bounding box, even though uniform has 512 cells and adaptive only one.
+    const double uniformLeft=objectProperty(sizedUniform.gdObjectString,"2")-
+        objectProperty(sizedUniform.gdObjectString,"32")*pixelizer::kPixelUnits/2;
+    const double adaptiveLeft=objectProperty(sizedAdaptive.gdObjectString,"2")-
+        objectProperty(sizedAdaptive.gdObjectString,"32")*pixelizer::kPixelUnits/2;
+    assert(std::abs(uniformLeft-640.0)<0.002);
+    assert(std::abs(adaptiveLeft-640.0)<0.002);
+
+    // Adaptive squares are non-overlapping and preserve image cell coverage,
+    // including irregular 13x7 boundaries and transparent regions.
+    pixelizer::Image patterned;
+    patterned.width=13; patterned.height=7; patterned.channels=4;
+    patterned.bytes.assign(13*7*4,255);
+    for(int y=0;y<7;++y) for(int x=0;x<13;++x) {
+        const size_t i=(static_cast<size_t>(y)*13+x)*4;
+        const bool transparent=x<3 && y>=5;
+        if(x>=9) {patterned.bytes[i]=0;patterned.bytes[i+1]=0;patterned.bytes[i+2]=0;}
+        if(transparent) patterned.bytes[i+3]=0;
+    }
+    auto packed=pixelizer::convertAdaptive(patterned,1000,700,13,0,390);
+    assert(packed.columns==13 && packed.rows==7);
+    std::vector<int> covered(13*7,0);
+    const double unit=pixelizer::pixelSizeForGrid(13,7,390);
+    size_t start=0,objects=0;
+    while(start<packed.gdObjectString.size()) {
+        const auto end=packed.gdObjectString.find(';',start);
+        assert(end!=std::string::npos);
+        const auto piece=packed.gdObjectString.substr(start,end-start);
+        auto property=[&](int code)->double {
+            const auto marker=std::to_string(code)+",";
+            const auto at=piece.find(marker);
+            assert(at!=std::string::npos);
+            const auto begin=at+marker.size();
+            return std::stod(piece.substr(begin,piece.find(',',begin)-begin));
+        };
+        const double xx=property(2),yy=property(3),scale=property(32);
+        const int side=static_cast<int>(std::lround(scale*pixelizer::kPixelUnits/unit));
+        const int x=static_cast<int>(std::lround((xx-1000.0)/unit+13.0/2.0-side/2.0));
+        const int y=static_cast<int>(std::lround(7.0/2.0-(yy-700.0)/unit-side/2.0));
+        assert(side>=1 && x>=0 && y>=0 && x+side<=13 && y+side<=7);
+        for(int cy=y;cy<y+side;++cy) for(int cx=x;cx<x+side;++cx)
+            assert(++covered[cy*13+cx]==1);
+        ++objects;
+        start=end+1;
+    }
+    assert(objects==static_cast<size_t>(packed.objectCount));
+    for(int y=0;y<7;++y) for(int x=0;x<13;++x)
+        assert(covered[y*13+x]==(x<3 && y>=5 ? 0 : 1));
+    assert(packed.objectCount<13*7);
+    std::cout << "OK: fixed-size preview/import and maximum adaptive squares validated\n";
 }

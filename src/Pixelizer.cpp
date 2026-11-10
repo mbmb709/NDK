@@ -57,12 +57,13 @@ namespace {
     }
 }
 
-double pixelSizeForGrid(int columns, int rows) {
+double pixelSizeForGrid(int columns, int rows, double imageSize) {
     const int longest = std::max(columns, rows);
-    return longest > 0 ? kCanvasMaxUnits / longest : 0.0;
+    return longest > 0 && std::isfinite(imageSize) && imageSize > 0.0
+        ? imageSize / longest : 0.0;
 }
 
-Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
+Conversion convert(Image const& img, double cx, double cy, int maxDimension, double imageSize) {
     Conversion res;
     if (img.width <= 0 || img.height <= 0 || (img.channels != 3 && img.channels != 4)) return res;
     const auto n = static_cast<size_t>(img.width) * img.height;
@@ -70,7 +71,8 @@ Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
     const auto [columns, rows] = targetSize(img, maxDimension);
     res.columns = columns;
     res.rows = rows;
-    const double pixelUnits = pixelSizeForGrid(columns, rows);
+    const double pixelUnits = pixelSizeForGrid(columns, rows, imageSize);
+    if (pixelUnits<=0.0) return {};
     const double objectScale = pixelUnits / kPixelUnits;
     std::ostringstream out;
     out.setf(std::ios::fixed);
@@ -93,72 +95,85 @@ Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
     res.gdObjectString=out.str();
     return res;
 }
-Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimension, int sensitivity) {
+Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimension, int sensitivity, double imageSize) {
     Conversion res;
     if (img.width<=0 || img.height<=0 || (img.channels!=3 && img.channels!=4)) return res;
     const auto n=static_cast<size_t>(img.width)*img.height;
     if (n>16'000'000 || img.bytes.size()!=n*img.channels) return res;
     const auto [columns,rows]=targetSize(img,maxDimension);
+    const double unit=pixelSizeForGrid(columns,rows,imageSize);
+    if (unit<=0.0) return res;
     res.columns=columns;
     res.rows=rows;
-    const double unit=pixelSizeForGrid(columns,rows);
     const int tolerance=std::clamp(sensitivity,0,64);
-    // First sample to the requested pixel grid, then merge only near-identical pixels.
-    // Working with a single grid keeps source sampling independent of quadtree depth.
-    Image grid=makePreview(img,maxDimension);
-    if (grid.width!=columns || grid.height!=rows) return res;
+    // Keep the same sampling grid as uniform mode. The merge must not alter image bounds.
+    const Image grid=makePreview(img,maxDimension);
+    if (grid.width!=columns || grid.height!=rows) return {};
+    std::vector<uint8_t> occupied(static_cast<size_t>(columns)*rows,0);
+    auto at=[&](int x,int y)->RGB {
+        const size_t i=(static_cast<size_t>(y)*columns+x)*4;
+        return {grid.bytes[i],grid.bytes[i+1],grid.bytes[i+2],grid.bytes[i+3]};
+    };
     std::ostringstream out;
     out.setf(std::ios::fixed);
     out << std::setprecision(4);
-    auto pixel=[&](int x,int y)->RGB {
-        auto i=(static_cast<size_t>(y)*columns+x)*4;
-        return {grid.bytes[i],grid.bytes[i+1],grid.bytes[i+2],grid.bytes[i+3]};
-    };
-    auto emit=[&](int x,int y,int side,RGB color) {
-        if (color.a<64) return;
-        const auto hsv=toHSV(color);
-        const double width=unit*side;
+
+    // Greedy largest-square search from each free cell. Unlike a 16px quadtree,
+    // the square can cover an entire 512x512 uniform image.
+    for(int y=0;y<rows;++y) for(int x=0;x<columns;++x) {
+        const size_t origin=static_cast<size_t>(y)*columns+x;
+        if (occupied[origin]) continue;
+        const RGB first=at(x,y);
+        const bool visible=first.a>=64;
+        int side=1;
+        uint64_t sumR=visible?first.r:0;
+        uint64_t sumG=visible?first.g:0;
+        uint64_t sumB=visible?first.b:0;
+        // Grow a square one outer L-shaped border at a time. A rejected border
+        // cannot become valid at a larger size, so we stop immediately.
+        const int maxSide=std::min(columns-x,rows-y);
+        while(side<maxSide) {
+            const int next=side+1;
+            uint64_t addR=0,addG=0,addB=0;
+            bool fits=true;
+            auto check=[&](int xx,int yy)->bool {
+                if (occupied[static_cast<size_t>(yy)*columns+xx]) return false;
+                const RGB p=at(xx,yy);
+                if ((p.a>=64)!=visible) return false;
+                if (visible) {
+                    if (std::abs(p.r-first.r)>tolerance ||
+                        std::abs(p.g-first.g)>tolerance ||
+                        std::abs(p.b-first.b)>tolerance) return false;
+                    addR+=p.r; addG+=p.g; addB+=p.b;
+                }
+                return true;
+            };
+            // New right column and bottom row, without visiting the corner twice.
+            for(int yy=y;yy<y+next;++yy) {
+                if(!check(x+side,yy)) {fits=false;break;}
+            }
+            if(fits) for(int xx=x;xx<x+side;++xx) {
+                if(!check(xx,y+side)) {fits=false;break;}
+            }
+            if(!fits) break;
+            sumR+=addR;sumG+=addG;sumB+=addB;
+            side=next;
+        }
+        // Reserve the square even when transparent; nothing may overlap it.
+        for(int yy=y;yy<y+side;++yy)
+            for(int xx=x;xx<x+side;++xx)
+                occupied[static_cast<size_t>(yy)*columns+xx]=1;
+        if (!visible) continue;
+        const uint64_t count=static_cast<uint64_t>(side)*side;
+        const RGB averaged{int(sumR/count),int(sumG/count),int(sumB/count),255};
+        const auto hsv=toHSV(averaged);
         const double px=cx+(x+side/2.0-columns/2.0)*unit;
         const double py=cy+(rows/2.0-y-side/2.0)*unit;
-        const double scale=width/kPixelUnits;
+        const double scale=(unit*side)/kPixelUnits;
         out << "1,917,2," << px << ",3," << py
             << ",21,1010,41,1,43," << hsv.h << 'a' << hsv.s << 'a' << hsv.v << "a1a1"
             << ",24,5,25,-7,32," << scale << ",64,1,67,1;";
         ++res.objectCount;
-    };
-    // Iterative quadtree avoids deep recursion and creates no overlapping cells.
-    struct Block { int x,y,side; };
-    std::vector<Block> stack;
-    constexpr int maxBlock=16;
-    for (int y=0;y<rows;y+=maxBlock) for(int x=0;x<columns;x+=maxBlock)
-        stack.push_back({x,y,maxBlock});
-    while (!stack.empty()) {
-        const auto b=stack.back();
-        stack.pop_back();
-        if (b.x>=columns || b.y>=rows) continue;
-        bool fits=b.x+b.side<=columns && b.y+b.side<=rows;
-        bool uniform=fits;
-        RGB first=pixel(b.x,b.y);
-        if (uniform && b.side>1) {
-            // Any strong color or transparency change signals an edge.
-            for(int y=b.y;y<b.y+b.side && uniform;++y)
-                for(int x=b.x;x<b.x+b.side;++x) {
-                    auto p=pixel(x,y);
-                    if (std::abs(p.r-first.r)>tolerance ||
-                        std::abs(p.g-first.g)>tolerance ||
-                        std::abs(p.b-first.b)>tolerance ||
-                        std::abs(p.a-first.a)>tolerance) {uniform=false;break;}
-                }
-        }
-        if (uniform || b.side==1) {
-            emit(b.x,b.y,b.side,first);
-        } else {
-            const int h=b.side/2;
-            stack.push_back({b.x+h,b.y+h,h});
-            stack.push_back({b.x,b.y+h,h});
-            stack.push_back({b.x+h,b.y,h});
-            stack.push_back({b.x,b.y,h});
-        }
     }
     res.gdObjectString=out.str();
     return res;
