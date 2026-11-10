@@ -57,6 +57,8 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 
 // Show an actionable diagnostic rather than a generic PNG/JPG error.
 std::string s_imageError;
+int s_pixelResolution = 64;
+constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128};
 
 // Read the selected image only once. The compressed image may be large, but
 // the editor should only keep a small preview to avoid OOM and GPU texture limits.
@@ -164,6 +166,8 @@ CCSprite* spriteFromImage(pixelizer::Image const& image) {
         texture->release();
         return nullptr;
     }
+    // Nearest-neighbor preview: make individual pixels crisp, not blurry.
+    texture->setAliasTexParameters();
     auto* sprite = CCSprite::createWithTexture(texture);
     texture->release();
     return sprite;
@@ -264,17 +268,17 @@ public:
         clearGhost();
         auto rgba=loadImage(m_fields->imagePath);
         if (rgba.width==0) return false;
-        auto* sprite=spriteFromImage(rgba);
-        if (!sprite) return false;
-        const auto reference=pixelizer::convert(rgba,0,0);
-        if (reference.columns==0 || reference.rows==0) {
-            s_imageError = "Image cannot be converted to a preview. Try a smaller JPG.";
+        auto sampled=pixelizer::makePreview(rgba,s_pixelResolution);
+        if (sampled.width==0 || sampled.height==0) {
+            s_imageError = "Image cannot be sampled at this pixel resolution.";
             return false;
         }
+        auto* sprite=spriteFromImage(sampled);
+        if (!sprite) return false;
         sprite->setPosition(center);
         sprite->setOpacity(180);
-        sprite->setScaleX(float(reference.columns*pixelizer::kPixelUnits)/sprite->getContentSize().width);
-        sprite->setScaleY(float(reference.rows*pixelizer::kPixelUnits)/sprite->getContentSize().height);
+        sprite->setScaleX(float(sampled.width*pixelizer::kPixelUnits)/sprite->getContentSize().width);
+        sprite->setScaleY(float(sampled.height*pixelizer::kPixelUnits)/sprite->getContentSize().height);
         sprite->setID("schematic.image-editor/visual-preview");
         m_editorLayer->m_objectLayer->addChild(sprite,5000);
         m_fields->ghost=sprite;
@@ -292,7 +296,7 @@ public:
         auto rgba=loadImage(m_fields->imagePath);
         if (!rgba.width) return std::nullopt;
         const auto center=placementCenter();
-        auto result=pixelizer::convert(rgba,center.x,center.y);
+        auto result=pixelizer::convert(rgba,center.x,center.y,s_pixelResolution);
         if (result.objectCount==0) return std::nullopt;
         return result;
     }
@@ -324,6 +328,8 @@ public:
 
 class ImageSchematicPopup final : public geode::Popup {
     CCLabelBMFont* m_name=nullptr;
+    CCLabelBMFont* m_detail=nullptr;
+    CCLabelBMFont* m_count=nullptr;
 
     void addButton(CCMenu* menu, char const* text, SEL_MenuHandler cb, float x, float y, float width=1.f) {
         auto* item=CCMenuItemSpriteExtra::create(ButtonSprite::create(text), this, cb);
@@ -339,21 +345,72 @@ class ImageSchematicPopup final : public geode::Popup {
         menu->setPosition({195,130});
         m_mainLayer->addChild(menu);
 
-        addButton(menu,"Import an Image",menu_selector(ImageSchematicPopup::onChooseImage),-82,63,.77f);
-        addButton(menu,"Browse Schematics",menu_selector(ImageSchematicPopup::onOpenSchematic),90,63,.76f);
-        addButton(menu,"Import",menu_selector(ImageSchematicPopup::onPreview),-104,-36,.82f);
-        addButton(menu,"Import Recommended Objects",menu_selector(ImageSchematicPopup::onImportPixels),70,-36,.60f);
-        addButton(menu,"Download .schem",menu_selector(ImageSchematicPopup::onDownloadImageSchematic),-93,-83,.75f);
-        addButton(menu,"Make a Schematic",menu_selector(ImageSchematicPopup::onSaveSelection),89,-83,.75f);
+        // Four evenly spaced rows; buttons do not overlap on small screens.
+        addButton(menu,"Choose Image",menu_selector(ImageSchematicPopup::onChooseImage),-95,77,.66f);
+        addButton(menu,"Open .schem",menu_selector(ImageSchematicPopup::onOpenSchematic),95,77,.66f);
+
+        addButton(menu,"-",menu_selector(ImageSchematicPopup::onFewerPixels),-125,14,.68f);
+        addButton(menu,"+",menu_selector(ImageSchematicPopup::onMorePixels),125,14,.68f);
+
+        addButton(menu,"Preview",menu_selector(ImageSchematicPopup::onPreview),-97,-36,.73f);
+        addButton(menu,"Import Pixel Art",menu_selector(ImageSchematicPopup::onImportPixels),97,-36,.66f);
+        addButton(menu,"Export .schem",menu_selector(ImageSchematicPopup::onDownloadImageSchematic),-97,-84,.62f);
+        addButton(menu,"Save Selection",menu_selector(ImageSchematicPopup::onSaveSelection),97,-84,.62f);
 
         m_name=CCLabelBMFont::create("No image selected", "bigFont.fnt");
-        m_name->setPosition({195,143});
-        m_name->setScale(.49f);
+        m_name->setPosition({195,172});
+        m_name->setScale(.44f);
         m_mainLayer->addChild(m_name);
+
+        s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution",64),16,128);
+        m_detail=CCLabelBMFont::create("", "bigFont.fnt");
+        m_detail->setPosition({195,145});
+        m_detail->setScale(.51f);
+        m_mainLayer->addChild(m_detail);
+        m_count=CCLabelBMFont::create("", "bigFont.fnt");
+        m_count->setPosition({195,121});
+        m_count->setScale(.38f);
+        m_mainLayer->addChild(m_count);
+        refreshPixelInfo();
+
         if (auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) {
             if (ui->hasImage()) setFilename(ui->chosenImageName());
         }
         return true;
+    }
+
+    void refreshPixelInfo() {
+        if (m_detail) {
+            const auto label="Pixel detail: "+std::to_string(s_pixelResolution)+" px";
+            m_detail->setString(label.c_str());
+        }
+        if (m_count) {
+            const auto maximum=s_pixelResolution*s_pixelResolution;
+            const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=96 ? " (may be slow)" : "");
+            m_count->setString(label.c_str());
+        }
+    }
+
+    void setPixelResolution(int next) {
+        s_pixelResolution=std::clamp(next,16,pixelizer::kMaxSelectableDimension);
+        Mod::get()->setSavedValue("pixel-resolution",s_pixelResolution);
+        refreshPixelInfo();
+    }
+
+    void onFewerPixels(CCObject*) {
+        for (int i=6;i>0;--i) if (s_pixelResolution>=kPixelSteps[i]) {
+            setPixelResolution(kPixelSteps[i-1]);
+            return;
+        }
+        setPixelResolution(kPixelSteps[0]);
+    }
+
+    void onMorePixels(CCObject*) {
+        for (const auto step:kPixelSteps) if (step>s_pixelResolution) {
+            setPixelResolution(step);
+            return;
+        }
+        setPixelResolution(kPixelSteps[6]);
     }
 
     void setFilename(std::string const& name) {
