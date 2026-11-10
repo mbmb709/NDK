@@ -332,7 +332,7 @@ public:
         // Same longest-edge size used by the actual GD object conversion.
         const auto texSize=sprite->getContentSize();
         const float longest=std::max(texSize.width,texSize.height);
-        if (longest<=0.f) { sprite->release(); return false; }
+        if (longest<=0.f) return false;
         sprite->setScale(static_cast<float>(s_imageSize)/longest);
         sprite->setID("schematic.image-editor/visual-preview");
         m_editorLayer->m_objectLayer->addChild(sprite,5000);

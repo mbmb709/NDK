@@ -122,10 +122,11 @@ int main() {
     auto sizedUniform=pixelizer::convert(photo,1000,700,32,chosenSize);
     auto sizedAdaptive=pixelizer::convertAdaptive(photo,1000,700,32,20,chosenSize);
     assert(sizedUniform.columns==32 && sizedAdaptive.columns==32);
+    assert(sizedAdaptive.objectCount==2);
     assert(std::abs(pixelizer::pixelSizeForGrid(32,16,chosenSize)*32-chosenSize)<0.001);
     assert(std::abs(objectProperty(sizedUniform.gdObjectString,"32")-3.0)<0.001);
-    assert(std::abs(objectProperty(sizedAdaptive.gdObjectString,"32")-96.0)<0.001);
-    // Same bounding box, even though uniform has 512 cells and adaptive only one.
+    assert(std::abs(objectProperty(sizedAdaptive.gdObjectString,"32")-48.0)<0.001);
+    // Same bounding box, even though uniform has 512 cells and adaptive uses large squares.
     const double uniformLeft=objectProperty(sizedUniform.gdObjectString,"2")-
         objectProperty(sizedUniform.gdObjectString,"32")*pixelizer::kPixelUnits/2;
     const double adaptiveLeft=objectProperty(sizedAdaptive.gdObjectString,"2")-
