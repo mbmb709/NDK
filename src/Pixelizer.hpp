@@ -26,6 +26,8 @@ constexpr double kCanvasMaxUnits = 480.0; // Same on-screen footprint for all re
 double pixelSizeForGrid(int columns, int rows);
 
 Conversion convert(Image const& image, double centerX, double centerY, int maxDimension = kMaxDimension);
+// Adaptive quadtree: larger cells on uniform areas, smaller cells on edges.
+Conversion convertAdaptive(Image const& image, double centerX, double centerY, int maxDimension = kMaxDimension, int sensitivity = 20);
 // Builds the low-resolution pixel-art image shown in the in-editor preview.
 Image makePreview(Image const& image, int maxDimension = kMaxDimension);
 }

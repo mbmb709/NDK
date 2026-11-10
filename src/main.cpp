@@ -58,6 +58,7 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 // Show an actionable diagnostic rather than a generic PNG/JPG error.
 std::string s_imageError;
 int s_pixelResolution = 256;
+bool s_adaptiveMode = true;
 constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
 
 // Read the selected image only once. The compressed image may be large, but
@@ -297,7 +298,7 @@ public:
         auto rgba=loadImage(m_fields->imagePath);
         if (!rgba.width) return std::nullopt;
         const auto center=placementCenter();
-        auto result=pixelizer::convert(rgba,center.x,center.y,s_pixelResolution);
+        auto result=s_adaptiveMode ? pixelizer::convertAdaptive(rgba,center.x,center.y,s_pixelResolution) : pixelizer::convert(rgba,center.x,center.y,s_pixelResolution);
         if (result.objectCount==0) return std::nullopt;
         return result;
     }
@@ -331,6 +332,7 @@ class ImageSchematicPopup final : public geode::Popup {
     CCLabelBMFont* m_name=nullptr;
     CCLabelBMFont* m_detail=nullptr;
     CCLabelBMFont* m_count=nullptr;
+    CCLabelBMFont* m_mode=nullptr;
 
     void addButton(CCMenu* menu, char const* text, SEL_MenuHandler cb, float x, float y, float width=1.f) {
         auto* item=CCMenuItemSpriteExtra::create(ButtonSprite::create(text), this, cb);
@@ -352,6 +354,7 @@ class ImageSchematicPopup final : public geode::Popup {
 
         addButton(menu,"-",menu_selector(ImageSchematicPopup::onFewerPixels),-125,14,.68f);
         addButton(menu,"+",menu_selector(ImageSchematicPopup::onMorePixels),125,14,.68f);
+        addButton(menu,"Mode",menu_selector(ImageSchematicPopup::onToggleAdaptive),0,14,.62f);
 
         addButton(menu,"Preview",menu_selector(ImageSchematicPopup::onPreview),-97,-36,.73f);
         addButton(menu,"Import Pixel Art",menu_selector(ImageSchematicPopup::onImportPixels),97,-36,.66f);
@@ -364,6 +367,7 @@ class ImageSchematicPopup final : public geode::Popup {
         m_mainLayer->addChild(m_name);
 
         s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",256),16,512);
+        s_adaptiveMode=Mod::get()->getSavedValue<bool>("adaptive-mode",true);
         m_detail=CCLabelBMFont::create("", "bigFont.fnt");
         m_detail->setPosition({195,145});
         m_detail->setScale(.51f);
@@ -372,6 +376,10 @@ class ImageSchematicPopup final : public geode::Popup {
         m_count->setPosition({195,121});
         m_count->setScale(.38f);
         m_mainLayer->addChild(m_count);
+        m_mode=CCLabelBMFont::create("", "bigFont.fnt");
+        m_mode->setPosition({195,101});
+        m_mode->setScale(.34f);
+        m_mainLayer->addChild(m_mode);
         refreshPixelInfo();
 
         if (auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) {
@@ -390,11 +398,18 @@ class ImageSchematicPopup final : public geode::Popup {
             const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=256 ? " (! Heavy!)" : s_pixelResolution>=128 ? " (slow)" : "");
             m_count->setString(label.c_str());
         }
+        if (m_mode) m_mode->setString(s_adaptiveMode ? "Adaptive ON: big flat blocks, small edges" : "Uniform: one object per pixel");
     }
 
     void setPixelResolution(int next) {
         s_pixelResolution=std::clamp(next,16,pixelizer::kMaxSelectableDimension);
         Mod::get()->setSavedValue("pixel-resolution-v2",s_pixelResolution);
+        refreshPixelInfo();
+    }
+
+    void onToggleAdaptive(CCObject*) {
+        s_adaptiveMode=!s_adaptiveMode;
+        Mod::get()->setSavedValue("adaptive-mode",s_adaptiveMode);
         refreshPixelInfo();
     }
 

@@ -97,5 +97,24 @@ int main() {
     assert(std::abs((smallFirstX-15.0/2.0)-760.0)<0.001);
     assert(std::abs((largeFirstX-0.9375/2.0)-760.0)<0.001);
 
-    std::cout << "OK: 5 objects, .schem round-trip, malformed file rejected\n";
+    // Adaptive mode merges large flat areas but keeps high contrast edges crisp.
+    pixelizer::Image uniform;
+    uniform.width=128; uniform.height=128; uniform.channels=4;
+    uniform.bytes.assign(128*128*4,255);
+    auto flat=pixelizer::convertAdaptive(uniform,0,0,128);
+    assert(flat.columns==128 && flat.rows==128);
+    assert(flat.objectCount==64); // 8x8 blocks of 16x16, instead of 16,384 cells
+    assert(flat.gdObjectString.find(",32,16.0000,64,1,67,1;")!=std::string::npos);
+    // A sharp vertical boundary forces small blocks near the edge.
+    for(int y=0;y<128;++y) for(int x=63;x<128;++x) {
+        const auto i=(static_cast<size_t>(y)*128+x)*4;
+        uniform.bytes[i]=0; uniform.bytes[i+1]=0; uniform.bytes[i+2]=0;
+    }
+    auto edged=pixelizer::convertAdaptive(uniform,0,0,128);
+    assert(edged.objectCount>flat.objectCount);
+    assert(edged.objectCount<128*128);
+    // Adaptive and uniform occupy the same fixed-size image canvas.
+    assert(edged.columns==128 && edged.rows==128);
+    assert(edged.gdObjectString.find(",64,1,67,1;")!=std::string::npos);
+    std::cout << "OK: 5 objects, adaptive pixelizer, .schem round-trip, malformed file rejected\n";
 }

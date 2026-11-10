@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.1.9",
+  "version": "v0.2.0",
   "developer": "Community Prototype",
-  "description": "Stable imported pixel-art when camera moves: disables GD fade and enter effects for every cell. Fixed-size images with 16-512px resolution. Geode 5.11.2, GD 2.2081."
+  "description": "Adaptive pixel-art mode merges uniform colors into larger blocks and preserves small edge details, fixed image dimensions, toggle between Adaptive and Uniform, 16-512 px."
 }
