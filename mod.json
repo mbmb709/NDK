@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.2.2",
+  "version": "v0.2.3",
   "developer": "Community Prototype",
-  "description": "High resolution up to 1024px; Smooth ON/OFF with Gaussian edge antialiasing and bilinear preview, matching import colors. Adaptive Max Merge, resizable preview, and a 150000-object safety limit."
+  "description": "Image Size adjustable from 120 to 3840 level units, with larger live Preview and matching imported object size. Includes 1024px detail, Smooth, Adaptive Max Merge and object safety limit."
 }

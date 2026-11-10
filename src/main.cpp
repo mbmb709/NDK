@@ -61,7 +61,9 @@ int s_pixelResolution = 512;
 bool s_adaptiveMode = true;
 bool s_smoothMode = true;
 int s_imageSize=480;
-constexpr int kImageSizeSteps[]={120,180,240,360,480,600,720,960};
+constexpr int kImageSizeSteps[]={120,180,240,360,480,600,720,960,1200,1440,1920,2400,2880,3840};
+constexpr int kLastImageSizeStep=13;
+constexpr int kMaxImageSize=3840;
 constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024};
 constexpr int kLastPixelStep=12;
 
@@ -249,7 +251,7 @@ public:
         menu->addChild(bigger);
         m_fields->smaller=smaller;
         m_fields->bigger=bigger;
-        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,960);
+        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,kMaxImageSize);
         menu->setID("schematic.image-editor/menu");
         this->addChild(menu,999);
         return true;
@@ -271,12 +273,12 @@ public:
     }
 
     void changePreviewSize(int next) {
-        s_imageSize=std::clamp(next,120,960);
+        s_imageSize=std::clamp(next,120,kMaxImageSize);
         Mod::get()->setSavedValue("image-size-v1",s_imageSize);
         resizeVisualImage(); // Resizes existing Preview immediately, preserving its center.
     }
     void onPreviewSmaller(CCObject*) {
-        for (int i=7;i>0;--i) if (s_imageSize>=kImageSizeSteps[i]) {
+        for (int i=kLastImageSizeStep;i>0;--i) if (s_imageSize>=kImageSizeSteps[i]) {
             changePreviewSize(kImageSizeSteps[i-1]);return;
         }
         changePreviewSize(kImageSizeSteps[0]);
@@ -285,7 +287,7 @@ public:
         for(const int step:kImageSizeSteps) if(step>s_imageSize) {
             changePreviewSize(step);return;
         }
-        changePreviewSize(kImageSizeSteps[7]);
+        changePreviewSize(kImageSizeSteps[kLastImageSizeStep]);
     }
 
     void clearGhost() {
@@ -439,7 +441,7 @@ class ImageSchematicPopup final : public geode::Popup {
         s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",512),16,pixelizer::kMaxSelectableDimension);
         s_adaptiveMode=Mod::get()->getSavedValue<bool>("adaptive-mode",true);
         s_smoothMode=Mod::get()->getSavedValue<bool>("smooth-mode-v1",true);
-        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,960);
+        s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,kMaxImageSize);
         m_detail=CCLabelBMFont::create("", "bigFont.fnt");
         m_detail->setPosition({195,176});
         m_detail->setScale(.40f);

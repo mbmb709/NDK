@@ -134,6 +134,19 @@ int main() {
     assert(std::abs(uniformLeft-640.0)<0.002);
     assert(std::abs(adaptiveLeft-640.0)<0.002);
 
+    // Large image dimensions should use the exact selected width without changing resolution.
+    auto hugeUniform=pixelizer::convert(photo,1000,700,32,3840.0);
+    auto hugeAdaptive=pixelizer::convertAdaptive(photo,1000,700,32,20,3840.0);
+    assert(hugeUniform.columns==32 && hugeAdaptive.columns==32);
+    assert(std::abs(objectProperty(hugeUniform.gdObjectString,"32")-16.0)<0.001);
+    assert(std::abs(objectProperty(hugeAdaptive.gdObjectString,"32")-256.0)<0.001);
+    assert(std::abs(objectProperty(hugeUniform.gdObjectString,"2")
+                    -objectProperty(hugeUniform.gdObjectString,"32")*pixelizer::kPixelUnits/2
+                    - (1000.0-3840.0/2)) < 0.002);
+    assert(std::abs(objectProperty(hugeAdaptive.gdObjectString,"2")
+                    -objectProperty(hugeAdaptive.gdObjectString,"32")*pixelizer::kPixelUnits/2
+                    - (1000.0-3840.0/2)) < 0.002);
+
     // Adaptive squares are non-overlapping and preserve image cell coverage,
     // including irregular 13x7 boundaries and transparent regions.
     pixelizer::Image patterned;
