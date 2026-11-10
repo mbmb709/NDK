@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.1.7",
+  "version": "v0.1.8",
   "developer": "Community Prototype",
-  "description": "Adjustable image pixel detail 16-512 pixels per longest side, sharp previews, image/schematic import and export. High detail creates many objects. Geode 5.11.2, Geometry Dash 2.2081."
+  "description": "Fixed-size images at every pixel density: higher resolutions create more, smaller scaled objects; sharp matching preview, 16-512px. GD 2.2081, Geode 5.11.2."
 }

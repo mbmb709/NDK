@@ -1,6 +1,7 @@
 #include "Pixelizer.hpp"
 #include "Schematic.hpp"
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 int main() {
@@ -58,6 +59,37 @@ int main() {
     assert(detail512big.width==512 && detail512big.height==256);
     assert(detail512big.bytes.size()==static_cast<size_t>(512*256*4));
     assert(pixelizer::kMaxSelectableDimension==512);
+
+    // Increasing resolution creates more, smaller objects within an identical footprint.
+    auto smallGrid=pixelizer::convert(photo,1000,700,32);
+    auto largeGrid=pixelizer::convert(photo,1000,700,512);
+    assert(smallGrid.columns==32 && smallGrid.rows==16 && smallGrid.objectCount==512);
+    assert(largeGrid.columns==512 && largeGrid.rows==256 && largeGrid.objectCount==131072);
+    assert(pixelizer::pixelSizeForGrid(32,16)==15.0);
+    assert(pixelizer::pixelSizeForGrid(512,256)==0.9375);
+    assert(pixelizer::pixelSizeForGrid(32,16)*32==pixelizer::kCanvasMaxUnits);
+    assert(pixelizer::pixelSizeForGrid(512,256)*512==pixelizer::kCanvasMaxUnits);
+    assert(pixelizer::pixelSizeForGrid(32,16)*16==pixelizer::pixelSizeForGrid(512,256)*256);
+
+    // Inspect serialized objects: the 32 key is the GD scale (not always 1 anymore).
+    auto objectProperty=[](std::string const& encoded, std::string const& property) {
+        const auto first=encoded.substr(0, encoded.find(';'));
+        const auto needle=","+property+",";
+        const auto pos=first.find(needle);
+        assert(pos!=std::string::npos);
+        auto valuePos=pos+needle.size();
+        return std::stod(first.substr(valuePos, first.find(',', valuePos)-valuePos));
+    };
+    const double smallScale=objectProperty(smallGrid.gdObjectString,"32");
+    const double largeScale=objectProperty(largeGrid.gdObjectString,"32");
+    assert(std::abs(smallScale-2.0)<0.0001);
+    assert(std::abs(largeScale-0.125)<0.0001);
+
+    // First cell center + half a cell must meet the same left edge at both resolutions.
+    const double smallFirstX=objectProperty(smallGrid.gdObjectString,"2");
+    const double largeFirstX=objectProperty(largeGrid.gdObjectString,"2");
+    assert(std::abs((smallFirstX-15.0/2.0)-760.0)<0.001);
+    assert(std::abs((largeFirstX-0.9375/2.0)-760.0)<0.001);
 
     std::cout << "OK: 5 objects, .schem round-trip, malformed file rejected\n";
 }

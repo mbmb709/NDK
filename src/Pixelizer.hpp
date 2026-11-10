@@ -19,7 +19,11 @@ struct Conversion {
 
 constexpr int kMaxDimension = 48;  // Legacy default for core and tests
 constexpr int kMaxSelectableDimension = 512; // Extreme mode: up to 262,144 objects; can overload GD
-constexpr double kPixelUnits = 7.5;   // GD pixel object 917 is 7.5 level units at scale 1
+constexpr double kPixelUnits = 7.5; // GD pixel object 917 is 7.5 level units at scale 1
+constexpr double kCanvasMaxUnits = 480.0; // Same on-screen footprint for all resolutions
+
+// One pixel shrinks as the grid gets denser; physical image size stays fixed.
+double pixelSizeForGrid(int columns, int rows);
 
 Conversion convert(Image const& image, double centerX, double centerY, int maxDimension = kMaxDimension);
 // Builds the low-resolution pixel-art image shown in the in-editor preview.

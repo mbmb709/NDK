@@ -57,6 +57,11 @@ namespace {
     }
 }
 
+double pixelSizeForGrid(int columns, int rows) {
+    const int longest = std::max(columns, rows);
+    return longest > 0 ? kCanvasMaxUnits / longest : 0.0;
+}
+
 Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
     Conversion res;
     if (img.width <= 0 || img.height <= 0 || (img.channels != 3 && img.channels != 4)) return res;
@@ -65,6 +70,8 @@ Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
     const auto [columns, rows] = targetSize(img, maxDimension);
     res.columns = columns;
     res.rows = rows;
+    const double pixelUnits = pixelSizeForGrid(columns, rows);
+    const double objectScale = pixelUnits / kPixelUnits;
     std::ostringstream out;
     out.setf(std::ios::fixed);
     out << std::setprecision(4);
@@ -72,12 +79,12 @@ Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
         const auto rgb=sample(img,x,y,res.columns,res.rows);
         if (rgb.a<64) continue;
         const auto hsv=toHSV(rgb);
-        const double objX=cx+(x+.5-res.columns/2.)*kPixelUnits;
-        const double objY=cy+(res.rows/2.-y-.5)*kPixelUnits;
+        const double objX=cx+(x+.5-res.columns/2.)*pixelUnits;
+        const double objY=cy+(res.rows/2.-y-.5)*pixelUnits;
         // 917: decorative pixel. 21: base channel (1010, white), 41/43: absolute HSV.
         out << "1,917,2," << objX << ",3," << objY
             << ",21,1010,41,1,43," << hsv.h << 'a' << hsv.s << 'a' << hsv.v << "a1a1"
-            << ",24,5,25,-7,32,1;";
+            << ",24,5,25,-7,32," << objectScale << ';';
         ++res.objectCount;
     }
     res.gdObjectString=out.str();

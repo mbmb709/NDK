@@ -277,8 +277,9 @@ public:
         if (!sprite) return false;
         sprite->setPosition(center);
         sprite->setOpacity(180);
-        sprite->setScaleX(float(sampled.width*pixelizer::kPixelUnits)/sprite->getContentSize().width);
-        sprite->setScaleY(float(sampled.height*pixelizer::kPixelUnits)/sprite->getContentSize().height);
+        const auto pixelUnits=pixelizer::pixelSizeForGrid(sampled.width,sampled.height);
+        sprite->setScaleX(float(sampled.width*pixelUnits)/sprite->getContentSize().width);
+        sprite->setScaleY(float(sampled.height*pixelUnits)/sprite->getContentSize().height);
         sprite->setID("schematic.image-editor/visual-preview");
         m_editorLayer->m_objectLayer->addChild(sprite,5000);
         m_fields->ghost=sprite;
@@ -381,7 +382,7 @@ class ImageSchematicPopup final : public geode::Popup {
 
     void refreshPixelInfo() {
         if (m_detail) {
-            const auto label="Pixel detail: "+std::to_string(s_pixelResolution)+" px";
+            const auto label="Pixel detail: "+std::to_string(s_pixelResolution)+" px (fixed size)";
             m_detail->setString(label.c_str());
         }
         if (m_count) {
