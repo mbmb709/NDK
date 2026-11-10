@@ -29,10 +29,33 @@ jobs:
     name: Package Android and Windows in one .geode
     runs-on: ubuntu-latest
     needs: [build]
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: geode-sdk/build-geode-mod/combine@main
         id: build
       - uses: actions/upload-artifact@v4
         with:
           name: ImageSchematicEditor-Geode-v5.11.2
           path: ${{ steps.build.outputs.build-output }}
+      - name: Publish easy-to-download Geode release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT_DIR: ${{ steps.build.outputs.build-output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(jq -r '.version' mod.json)"
+          test -n "$TAG" && test "$TAG" != "null"
+          FILE="$(find "$OUTPUT_DIR" -type f -name '*.geode' -print -quit)"
+          test -n "$FILE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE#schematic.image-editor.geode" --clobber
+          else
+            gh release create "$TAG" "$FILE#schematic.image-editor.geode" \
+              --target "$GITHUB_SHA" \
+              --title "Image & Schematic Editor $TAG" \
+              --notes "Experimental mod for Geometry Dash 2.2081 and Geode 5.11.2. Includes Android 32/64-bit and Windows binaries. High pixel counts may slow down or crash the game."
+          fi
