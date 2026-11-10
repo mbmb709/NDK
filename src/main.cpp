@@ -57,11 +57,13 @@ std::filesystem::path suggestedDownload(std::string const& name) {
 
 // Show an actionable diagnostic rather than a generic PNG/JPG error.
 std::string s_imageError;
-int s_pixelResolution = 256;
+int s_pixelResolution = 512;
 bool s_adaptiveMode = true;
+bool s_smoothMode = true;
 int s_imageSize=480;
 constexpr int kImageSizeSteps[]={120,180,240,360,480,600,720,960};
-constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
+constexpr int kPixelSteps[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024};
+constexpr int kLastPixelStep=12;
 
 // Read the selected image only once. The compressed image may be large, but
 // the editor should only keep a small preview to avoid OOM and GPU texture limits.
@@ -88,7 +90,7 @@ bool decodePickedImage(std::filesystem::path const& path, CCImage& image) {
     return true;
 }
 
-constexpr int kPreviewMaxEdge = 512;
+constexpr int kPreviewMaxEdge = pixelizer::kMaxSelectableDimension;
 
 // Keep aspect ratio at any source resolution. Sample each destination pixel from
 // a small, regularly-spaced grid in its source area to bound CPU work and RAM.
@@ -155,7 +157,7 @@ pixelizer::Image loadImage(std::filesystem::path const& path) {
     return result;
 }
 
-CCSprite* spriteFromImage(pixelizer::Image const& image) {
+CCSprite* spriteFromImage(pixelizer::Image const& image, bool smooth) {
     if (image.width <= 0 || image.height <= 0 || image.channels != 4 || image.bytes.empty()) {
         s_imageError = "Preview has no pixel data.";
         return nullptr;
@@ -169,8 +171,9 @@ CCSprite* spriteFromImage(pixelizer::Image const& image) {
         texture->release();
         return nullptr;
     }
-    // Nearest-neighbor preview: make individual pixels crisp, not blurry.
-    texture->setAliasTexParameters();
+    // Smooth preview uses GPU bilinear filtering; the pixel-art mode keeps crisp squares.
+    if (smooth) texture->setAntiAliasTexParameters();
+    else texture->setAliasTexParameters();
     auto* sprite = CCSprite::createWithTexture(texture);
     texture->release();
     return sprite;
@@ -320,12 +323,14 @@ public:
         clearGhost();
         auto rgba=loadImage(m_fields->imagePath);
         if (rgba.width==0) return false;
-        auto sampled=pixelizer::makePreview(rgba,s_pixelResolution);
+        auto sampled=s_smoothMode
+            ? pixelizer::makeSmoothPreview(rgba,s_pixelResolution)
+            : pixelizer::makePreview(rgba,s_pixelResolution);
         if (sampled.width==0 || sampled.height==0) {
             s_imageError = "Image cannot be sampled at this pixel resolution.";
             return false;
         }
-        auto* sprite=spriteFromImage(sampled);
+        auto* sprite=spriteFromImage(sampled,s_smoothMode);
         if (!sprite) return false;
         sprite->setPosition(center);
         sprite->setOpacity(180);
@@ -353,8 +358,12 @@ public:
         if (!rgba.width) return std::nullopt;
         const auto center=placementCenter();
         auto result=s_adaptiveMode
-            ? pixelizer::convertAdaptive(rgba,center.x,center.y,s_pixelResolution,20,s_imageSize)
-            : pixelizer::convert(rgba,center.x,center.y,s_pixelResolution,s_imageSize);
+            ? pixelizer::convertAdaptive(rgba,center.x,center.y,s_pixelResolution,20,s_imageSize,s_smoothMode)
+            : pixelizer::convert(rgba,center.x,center.y,s_pixelResolution,s_imageSize,s_smoothMode);
+        if (result.limitExceeded) {
+            s_imageError="Too many objects (safe limit: 150000). Enable Adaptive or lower Pixel Detail.";
+            return std::nullopt;
+        }
         if (result.objectCount==0) return std::nullopt;
         return result;
     }
@@ -414,6 +423,7 @@ class ImageSchematicPopup final : public geode::Popup {
         addButton(menu,"Mode",menu_selector(ImageSchematicPopup::onToggleAdaptive),0,-8,.52f);
 
         addButton(menu,"Size -",menu_selector(ImageSchematicPopup::onSmallerImage),-125,-42,.57f);
+        addButton(menu,"Smooth",menu_selector(ImageSchematicPopup::onToggleSmooth),0,-42,.51f);
         addButton(menu,"Size +",menu_selector(ImageSchematicPopup::onLargerImage),125,-42,.57f);
 
         addButton(menu,"Preview",menu_selector(ImageSchematicPopup::onPreview),-97,-77,.64f);
@@ -426,8 +436,9 @@ class ImageSchematicPopup final : public geode::Popup {
         m_name->setScale(.40f);
         m_mainLayer->addChild(m_name);
 
-        s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",256),16,512);
+        s_pixelResolution=std::clamp(Mod::get()->getSavedValue<int>("pixel-resolution-v2",512),16,pixelizer::kMaxSelectableDimension);
         s_adaptiveMode=Mod::get()->getSavedValue<bool>("adaptive-mode",true);
+        s_smoothMode=Mod::get()->getSavedValue<bool>("smooth-mode-v1",true);
         s_imageSize=std::clamp(Mod::get()->getSavedValue<int>("image-size-v1",480),120,960);
         m_detail=CCLabelBMFont::create("", "bigFont.fnt");
         m_detail->setPosition({195,176});
@@ -442,7 +453,7 @@ class ImageSchematicPopup final : public geode::Popup {
         m_mode->setScale(.29f);
         m_mainLayer->addChild(m_mode);
         m_size=CCLabelBMFont::create("", "bigFont.fnt");
-        m_size->setPosition({195,88});
+        m_size->setPosition({195,103});
         m_size->setScale(.44f);
         m_mainLayer->addChild(m_size);
         refreshPixelInfo();
@@ -460,10 +471,13 @@ class ImageSchematicPopup final : public geode::Popup {
         }
         if (m_count) {
             const auto maximum=s_pixelResolution*s_pixelResolution;
-            const auto label="Up to "+std::to_string(maximum)+" objects"+(s_pixelResolution>=256 ? " (! Heavy!)" : s_pixelResolution>=128 ? " (slow)" : "");
+            const auto label="Up to "+std::to_string(maximum)+" pixels; safety cap 150000 objects";
             m_count->setString(label.c_str());
         }
-        if (m_mode) m_mode->setString(s_adaptiveMode ? "Adaptive MAX: largest matching squares" : "Uniform: one object per pixel");
+        if (m_mode) {
+            const auto label=std::string(s_adaptiveMode ? "Adaptive MAX" : "Uniform")+" | Smooth "+(s_smoothMode ? "ON" : "OFF");
+            m_mode->setString(label.c_str());
+        }
         if (m_size) m_size->setString(("Size: "+std::to_string(s_imageSize)+"u").c_str());
     }
 
@@ -480,6 +494,13 @@ class ImageSchematicPopup final : public geode::Popup {
         Mod::get()->setSavedValue("adaptive-mode",s_adaptiveMode);
         refreshPixelInfo();
     }
+    void onToggleSmooth(CCObject*) {
+        s_smoothMode=!s_smoothMode;
+        Mod::get()->setSavedValue("smooth-mode-v1",s_smoothMode);
+        if(auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get()))
+            if(ui->hasVisualPreview()) ui->showVisualImage();
+        refreshPixelInfo();
+    }
 
     void onSmallerImage(CCObject*) {
         if(auto* ui=static_cast<ImageSchematicEditorUI*>(EditorUI::get())) ui->onPreviewSmaller(nullptr);
@@ -491,7 +512,7 @@ class ImageSchematicPopup final : public geode::Popup {
     }
 
     void onFewerPixels(CCObject*) {
-        for (int i=10;i>0;--i) if (s_pixelResolution>=kPixelSteps[i]) {
+        for (int i=kLastPixelStep;i>0;--i) if (s_pixelResolution>=kPixelSteps[i]) {
             setPixelResolution(kPixelSteps[i-1]);
             return;
         }
@@ -503,7 +524,7 @@ class ImageSchematicPopup final : public geode::Popup {
             setPixelResolution(step);
             return;
         }
-        setPixelResolution(kPixelSteps[10]);
+        setPixelResolution(kPixelSteps[kLastPixelStep]);
     }
 
     void setFilename(std::string const& name) {

@@ -63,39 +63,40 @@ double pixelSizeForGrid(int columns, int rows, double imageSize) {
         ? imageSize / longest : 0.0;
 }
 
-Conversion convert(Image const& img, double cx, double cy, int maxDimension, double imageSize) {
+Conversion convert(Image const& img, double cx, double cy, int maxDimension, double imageSize, bool smooth) {
     Conversion res;
-    if (img.width <= 0 || img.height <= 0 || (img.channels != 3 && img.channels != 4)) return res;
-    const auto n = static_cast<size_t>(img.width) * img.height;
-    if (n>16'000'000 || img.bytes.size()!=n*img.channels) return res;
-    const auto [columns, rows] = targetSize(img, maxDimension);
-    res.columns = columns;
-    res.rows = rows;
-    const double pixelUnits = pixelSizeForGrid(columns, rows, imageSize);
+    if (img.width<=0 || img.height<=0 || (img.channels!=3 && img.channels!=4)) return res;
+    const auto grid = smooth ? makeSmoothPreview(img,maxDimension) : makePreview(img,maxDimension);
+    if (grid.width<=0 || grid.height<=0) return res;
+    res.columns=grid.width;
+    res.rows=grid.height;
+    const double pixelUnits=pixelSizeForGrid(grid.width,grid.height,imageSize);
     if (pixelUnits<=0.0) return {};
-    const double objectScale = pixelUnits / kPixelUnits;
+    const double objectScale=pixelUnits/kPixelUnits;
     std::ostringstream out;
     out.setf(std::ios::fixed);
     out << std::setprecision(4);
-    for (int y=0; y<res.rows; ++y) for(int x=0; x<res.columns; ++x) {
-        const auto rgb=sample(img,x,y,res.columns,res.rows);
-        if (rgb.a<64) continue;
-        const auto hsv=toHSV(rgb);
-        const double objX=cx+(x+.5-res.columns/2.)*pixelUnits;
-        const double objY=cy+(res.rows/2.-y-.5)*pixelUnits;
-        // 917: decorative pixel. 21: base channel (1010, white), 41/43: absolute HSV.
-        // Disable camera enter/shrink/fade transitions on imported image cells.
-        // 64 = Don't Fade, 67 = Don't Enter (GD object properties).
-        out << "1,917,2," << objX << ",3," << objY
+    for(int y=0;y<res.rows;++y) for(int x=0;x<res.columns;++x) {
+        const auto i=(static_cast<size_t>(y)*res.columns+x)*4;
+        if (grid.bytes[i+3]<64) continue;
+        if (res.objectCount>=kMaxObjectCount) {
+            res.objectCount=0;
+            res.limitExceeded=true;
+            return res;
+        }
+        const RGB p{grid.bytes[i],grid.bytes[i+1],grid.bytes[i+2],grid.bytes[i+3]};
+        const auto hsv=toHSV(p);
+        const double px=cx+(x+.5-res.columns/2.)*pixelUnits;
+        const double py=cy+(res.rows/2.-y-.5)*pixelUnits;
+        out << "1,917,2," << px << ",3," << py
             << ",21,1010,41,1,43," << hsv.h << 'a' << hsv.s << 'a' << hsv.v << "a1a1"
-            << ",24,5,25,-7,32," << objectScale
-            << ",64,1,67,1;";
+            << ",24,5,25,-7,32," << objectScale << ",64,1,67,1;";
         ++res.objectCount;
     }
     res.gdObjectString=out.str();
     return res;
 }
-Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimension, int sensitivity, double imageSize) {
+Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimension, int sensitivity, double imageSize, bool smooth) {
     Conversion res;
     if (img.width<=0 || img.height<=0 || (img.channels!=3 && img.channels!=4)) return res;
     const auto n=static_cast<size_t>(img.width)*img.height;
@@ -107,7 +108,7 @@ Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimens
     res.rows=rows;
     const int tolerance=std::clamp(sensitivity,0,64);
     // Keep the same sampling grid as uniform mode. The merge must not alter image bounds.
-    const Image grid=makePreview(img,maxDimension);
+    const Image grid=smooth ? makeSmoothPreview(img,maxDimension) : makePreview(img,maxDimension);
     if (grid.width!=columns || grid.height!=rows) return {};
     std::vector<uint8_t> occupied(static_cast<size_t>(columns)*rows,0);
     auto at=[&](int x,int y)->RGB {
@@ -164,6 +165,11 @@ Conversion convertAdaptive(Image const& img, double cx, double cy, int maxDimens
             for(int xx=x;xx<x+side;++xx)
                 occupied[static_cast<size_t>(yy)*columns+xx]=1;
         if (!visible) continue;
+        if (res.objectCount>=kMaxObjectCount) {
+            res.objectCount=0;
+            res.limitExceeded=true;
+            return res;
+        }
         const uint64_t count=static_cast<uint64_t>(side)*side;
         const RGB averaged{int(sumR/count),int(sumG/count),int(sumB/count),255};
         const auto hsv=toHSV(averaged);
@@ -198,5 +204,36 @@ Image makePreview(Image const& img, int maxDimension) {
     }
     return preview;
 }
+
+Image makeSmoothPreview(Image const& img, int maxDimension) {
+    Image base=makePreview(img,maxDimension);
+    if (base.width<1 || base.height<1 || base.channels!=4) return base;
+    Image result=base;
+    // 3x3 Gaussian blur with premultiplied alpha. Flat areas stay identical;
+    // antialiased transitions appear at contours instead of sharp stair steps.
+    constexpr int weights[3][3]={{1,2,1},{2,4,2},{1,2,1}};
+    for(int y=0;y<base.height;++y) for(int x=0;x<base.width;++x) {
+        uint64_t alpha=0, red=0, green=0, blue=0;
+        for(int dy=-1;dy<=1;++dy) for(int dx=-1;dx<=1;++dx) {
+            const int xx=std::clamp(x+dx,0,base.width-1);
+            const int yy=std::clamp(y+dy,0,base.height-1);
+            const size_t src=(static_cast<size_t>(yy)*base.width+xx)*4;
+            const int w=weights[dy+1][dx+1];
+            const uint64_t a=base.bytes[src+3];
+            const uint64_t wa=a*w;
+            alpha+=wa;
+            red+=wa*base.bytes[src];
+            green+=wa*base.bytes[src+1];
+            blue+=wa*base.bytes[src+2];
+        }
+        const size_t dst=(static_cast<size_t>(y)*base.width+x)*4;
+        result.bytes[dst]=alpha?static_cast<uint8_t>((red+alpha/2)/alpha):0;
+        result.bytes[dst+1]=alpha?static_cast<uint8_t>((green+alpha/2)/alpha):0;
+        result.bytes[dst+2]=alpha?static_cast<uint8_t>((blue+alpha/2)/alpha):0;
+        result.bytes[dst+3]=static_cast<uint8_t>((alpha+8)/16);
+    }
+    return result;
+}
+
 
 }

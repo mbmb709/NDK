@@ -6,7 +6,7 @@
   },
   "id": "schematic.image-editor",
   "name": "Image & Schematic Editor",
-  "version": "v0.2.1",
+  "version": "v0.2.2",
   "developer": "Community Prototype",
-  "description": "Resizable 120-960 unit image Preview, import at identical chosen size and position, live +/- controls; improved Adaptive Max Merge searches largest fitting uniform square without 16x16 limit, 16-512px detail."
+  "description": "High resolution up to 1024px; Smooth ON/OFF with Gaussian edge antialiasing and bilinear preview, matching import colors. Adaptive Max Merge, resizable preview, and a 150000-object safety limit."
 }

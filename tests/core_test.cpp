@@ -63,7 +63,7 @@ int main() {
     auto detail512big=pixelizer::makePreview(photo,512);
     assert(detail512big.width==512 && detail512big.height==256);
     assert(detail512big.bytes.size()==static_cast<size_t>(512*256*4));
-    assert(pixelizer::kMaxSelectableDimension==512);
+    assert(pixelizer::kMaxSelectableDimension==1024);
 
     // Increasing resolution creates more, smaller objects within an identical footprint.
     auto smallGrid=pixelizer::convert(photo,1000,700,32);
@@ -175,5 +175,50 @@ int main() {
     for(int y=0;y<7;++y) for(int x=0;x<13;++x)
         assert(covered[y*13+x]==(x<3 && y>=5 ? 0 : 1));
     assert(packed.objectCount<13*7);
-    std::cout << "OK: fixed-size preview/import and maximum adaptive squares validated\n";
+
+    // More than 512 source pixels are retained: no silent 512px source cap.
+    pixelizer::Image highres;
+    highres.width=1024; highres.height=768; highres.channels=4;
+    highres.bytes.assign(static_cast<size_t>(highres.width)*highres.height*4,255);
+    auto fullPreview=pixelizer::makePreview(highres,1024);
+    assert(pixelizer::kMaxSelectableDimension==1024);
+    assert(fullPreview.width==1024 && fullPreview.height==768);
+    auto smoothHigh=pixelizer::makeSmoothPreview(highres,1024);
+    assert(smoothHigh.width==1024 && smoothHigh.height==768);
+    assert(smoothHigh.bytes==fullPreview.bytes); // Uniform fields retain original color.
+    auto maxMerged=pixelizer::convertAdaptive(highres,0,0,1024,20,960,true);
+    assert(maxMerged.columns==1024 && maxMerged.rows==768);
+    assert(maxMerged.objectCount>0 && maxMerged.objectCount<10);
+    assert(!maxMerged.limitExceeded);
+
+    // A crisp black/white transition produces intermediate antialiased colors.
+    pixelizer::Image edgeImg;
+    edgeImg.width=8;edgeImg.height=8;edgeImg.channels=4;
+    edgeImg.bytes.resize(8*8*4,255);
+    for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
+        const auto idx=(static_cast<size_t>(y)*8+x)*4;
+        if(x<4) edgeImg.bytes[idx]=edgeImg.bytes[idx+1]=edgeImg.bytes[idx+2]=0;
+    }
+    auto hard=pixelizer::makePreview(edgeImg,8);
+    auto softened=pixelizer::makeSmoothPreview(edgeImg,8);
+    assert(hard.bytes[(3*8+3)*4]==0);
+    assert(softened.bytes[(3*8+3)*4]>0 && softened.bytes[(3*8+3)*4]<255);
+    assert(softened.bytes[(3*8+4)*4]>0 && softened.bytes[(3*8+4)*4]<255);
+    assert(softened.bytes[(3*8+0)*4]==0 && softened.bytes[(3*8+7)*4]==255);
+    auto smoothObjects=pixelizer::convertAdaptive(edgeImg,0,0,8,0,240,true);
+    assert(smoothObjects.objectCount>0);
+    assert(smoothObjects.gdObjectString!=pixelizer::convertAdaptive(edgeImg,0,0,8,0,240,false).gdObjectString);
+
+    // Guard: a dense fully unmergeable image must not freeze GD with >150000 objects.
+    pixelizer::Image noisy;
+    noisy.width=400;noisy.height=400;noisy.channels=3;
+    noisy.bytes.resize(static_cast<size_t>(400)*400*3);
+    for(int y=0;y<400;++y) for(int x=0;x<400;++x) {
+        const auto idx=(static_cast<size_t>(y)*400+x)*3;
+        const uint8_t shade=(x+y)%2 ? 255 : 0;
+        noisy.bytes[idx]=noisy.bytes[idx+1]=noisy.bytes[idx+2]=shade;
+    }
+    auto tooMany=pixelizer::convert(noisy,0,0,400,480,false);
+    assert(tooMany.limitExceeded && tooMany.objectCount==0 && tooMany.gdObjectString.empty());
+    std::cout << "OK: 1024px, antialiased smooth mode, safe object cap, adaptive merging\n";
 }
