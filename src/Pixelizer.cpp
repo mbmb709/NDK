@@ -29,6 +29,16 @@ namespace {
         return {int(red/alpha), int(green/alpha), int(blue/alpha), int(alpha/count)};
     }
 
+    // Preserve original aspect ratio while limiting maximum GD object count.
+    std::pair<int, int> targetSize(Image const& img, int maxDimension) {
+        const int limit = std::clamp(maxDimension, 8, kMaxSelectableDimension);
+        const double factor=std::min({1., double(limit)/img.width, double(limit)/img.height});
+        return {
+            std::max(1,static_cast<int>(std::round(img.width * factor))),
+            std::max(1,static_cast<int>(std::round(img.height * factor)))
+        };
+    }
+
     struct HSV { int h=0; double s=0., v=0.; };
     HSV toHSV(RGB p) {
         const double r=p.r/255., g=p.g/255., b=p.b/255.;
@@ -47,14 +57,14 @@ namespace {
     }
 }
 
-Conversion convert(Image const& img, double cx, double cy) {
+Conversion convert(Image const& img, double cx, double cy, int maxDimension) {
     Conversion res;
     if (img.width <= 0 || img.height <= 0 || (img.channels != 3 && img.channels != 4)) return res;
     const auto n = static_cast<size_t>(img.width) * img.height;
     if (n>16'000'000 || img.bytes.size()!=n*img.channels) return res;
-    const double downscale=std::min({1., double(kMaxDimension)/img.width, double(kMaxDimension)/img.height});
-    res.columns=std::max(1,static_cast<int>(std::round(img.width * downscale)));
-    res.rows=std::max(1,static_cast<int>(std::round(img.height * downscale)));
+    const auto [columns, rows] = targetSize(img, maxDimension);
+    res.columns = columns;
+    res.rows = rows;
     std::ostringstream out;
     out.setf(std::ios::fixed);
     out << std::setprecision(4);
@@ -73,4 +83,24 @@ Conversion convert(Image const& img, double cx, double cy) {
     res.gdObjectString=out.str();
     return res;
 }
+Image makePreview(Image const& img, int maxDimension) {
+    Image preview;
+    if (img.width <= 0 || img.height <= 0 || (img.channels != 3 && img.channels != 4)) return preview;
+    const auto n=static_cast<size_t>(img.width)*img.height;
+    if (n>16'000'000 || img.bytes.size()!=n*img.channels) return preview;
+    const auto [columns, rows] = targetSize(img, maxDimension);
+    preview.width = columns;
+    preview.height = rows;
+    preview.channels = 4;
+    preview.bytes.reserve(static_cast<size_t>(columns)*rows*4);
+    for (int y=0; y<rows; ++y) for (int x=0; x<columns; ++x) {
+        const auto p = sample(img,x,y,columns,rows);
+        preview.bytes.push_back(static_cast<uint8_t>(p.r));
+        preview.bytes.push_back(static_cast<uint8_t>(p.g));
+        preview.bytes.push_back(static_cast<uint8_t>(p.b));
+        preview.bytes.push_back(static_cast<uint8_t>(p.a));
+    }
+    return preview;
+}
+
 }
