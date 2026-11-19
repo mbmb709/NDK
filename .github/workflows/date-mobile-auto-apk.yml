@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 jobs:
   apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -13,9 +13,21 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Instaleaza platforma Android 35
+        shell: bash
         run: |
-          yes | /usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager --licenses >/dev/null || true
-          /usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          SDKROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMGR=$(find "$SDKROOT" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)
+          if [ -z "$SDKMGR" ]; then
+            SDKROOT="$HOME/android-sdk"
+            mkdir -p "$SDKROOT/cmdline-tools"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/cmdline-tools.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/android-cmd
+            mv /tmp/android-cmd/cmdline-tools "$SDKROOT/cmdline-tools/latest"
+            SDKMGR="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "ANDROID_HOME=$SDKROOT" >> "$GITHUB_ENV"
+          yes | "$SDKMGR" --sdk_root="$SDKROOT" --licenses >/dev/null || true
+          "$SDKMGR" --sdk_root="$SDKROOT" "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
