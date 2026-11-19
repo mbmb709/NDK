@@ -30,7 +30,6 @@ jobs:
       - name: Extract source and build
         run: |
           tar -xJf EcranViu-src.tar.xz
-          python3 fix_gif.py
           cd EcranViu
           gradle --no-daemon :app:assembleDebug --stacktrace
       - name: Publish APK

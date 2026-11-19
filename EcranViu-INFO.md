@@ -1,9 +1,9 @@
-# Ecran Viu APK
+# Ecran Viu v3
 
-Prototip Android construit exclusiv în ramura separată `ecranviu-apk-build-2026`, fără modificarea ramurii `main`.
+Build isolated on the `ecranviu-apk-build-2026` branch. Android 9+.
 
-Vezi Actions > Build EcranViu APK și descarcă artifact `EcranViu-APK`.
+V3 changes: configurable screen-off inactivity `hh:mm:ss` (default 00:01:00); configurable post-inactivity random wait `hh:mm:ss` minimum and maximum (defaults 00:05:00 and 00:10:00), accepting 00:00:00. Selected settings persist. GIF one-cycle fix retained.
 
-Conține aplicația Android 9+ și sursa comprimată în `EcranViu-src.tar.xz`.
+Run GitHub Actions `Build EcranViu APK` and download `EcranViu-APK` artifact.
 
-Limitare: Android modern poate bloca pornirea automată pe ecranul blocat, chiar dacă permisiunile sunt acordate. Nu garantează funcționarea pe toate modelele.
+Note: Android battery policy, fullscreen restrictions and exact alarm permissions may delay or prevent automatic wakeups. The debug APK may not install as an update on top of an APK signed in a different CI run.
